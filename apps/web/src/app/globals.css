@@ -1,0 +1,167 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ════════════════════════════════════════════════════════════════
+   N1 Master Design Tokens
+   ════════════════════════════════════════════════════════════════ */
+
+:root,
+[data-theme='dark'] {
+  --color-bg: #09090f;
+  --color-surface: #111118;
+  --color-surface-raised: #1a1a26;
+  --color-surface-overlay: #20202e;
+  --color-border: #2a2a3c;
+  --color-border-subtle: #1e1e2c;
+
+  --color-text-primary: #f0f0f8;
+  --color-text-secondary: #8a8aa8;
+  --color-text-muted: #52526a;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+
+  --glass-bg: rgba(17, 17, 24, 0.72);
+  --glass-bg-raised: rgba(26, 26, 38, 0.78);
+  --glass-bg-overlay: rgba(32, 32, 46, 0.88);
+  --glass-border: rgba(42, 42, 60, 0.65);
+}
+
+[data-theme='light'] {
+  --color-bg: #f8f8fc;
+  --color-surface: #ffffff;
+  --color-surface-raised: #f0f0f8;
+  --color-surface-overlay: #e8e8f4;
+  --color-border: #d8d8ec;
+  --color-border-subtle: #e4e4f4;
+
+  --color-text-primary: #0f0f1a;
+  --color-text-secondary: #4a4a6a;
+  --color-text-muted: #8a8aaa;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-bg-raised: rgba(240, 240, 248, 0.88);
+  --glass-bg-overlay: rgba(232, 232, 244, 0.94);
+  --glass-border: rgba(216, 216, 236, 0.75);
+}
+
+/* Base Body & HTML Styling */
+html,
+body {
+  position: relative;
+  min-height: 100vh;
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
+}
+
+/* Ambient Background: Dual Radial Blooms */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 12% -8%, rgba(124, 58, 237, 0.16), transparent 60%),
+    radial-gradient(48rem 34rem at 92% 8%, rgba(245, 197, 24, 0.08), transparent 55%),
+    radial-gradient(50rem 50rem at 50% 120%, rgba(124, 58, 237, 0.1), transparent 60%);
+}
+
+/* Subtle 64px Grid Overlay with Radial Falloff */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(to right, var(--color-border-subtle) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-border-subtle) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 0%, transparent 75%);
+}
+
+/* Glassmorphism Utilities */
+@layer utilities {
+  .glass {
+    background-color: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-raised {
+    background-color: var(--glass-bg-raised);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-overlay {
+    background-color: var(--glass-bg-overlay);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glow-purple {
+    box-shadow: 0 0 35px rgba(124, 58, 237, 0.22);
+  }
+
+  .glow-purple-sm {
+    box-shadow: 0 0 15px rgba(124, 58, 237, 0.28);
+  }
+
+  .glow-gold {
+    box-shadow: 0 0 35px rgba(245, 197, 24, 0.18);
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-n1-purple focus-visible:ring-offset-2 focus-visible:ring-offset-n1-bg;
+  }
+}
+
+/* Scrollbar Customization */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Selection Color */
+::selection {
+  background-color: rgba(124, 58, 237, 0.35);
+  color: #ffffff;
+}

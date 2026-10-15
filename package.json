@@ -1,0 +1,36 @@
+{
+  "name": "n1-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "N1 — Privacy-first, zero-cost temporary sharing and productivity platform",
+  "packageManager": "pnpm@10.13.1",
+  "scripts": {
+    "dev:web": "pnpm --filter @n1/web dev",
+    "dev:api": "pnpm --filter @n1/api dev",
+    "build:web": "pnpm -r --filter=!@n1/api --filter=!@n1/web build && pnpm --filter @n1/web build",
+    "build:api": "pnpm -r --filter=!@n1/web build",
+    "start:web": "pnpm --filter @n1/web start",
+    "start:api": "pnpm --filter @n1/api start",
+    "build": "pnpm -r --filter=!@n1/web build && pnpm --filter @n1/web build",
+    "lint": "eslint . --ext .ts,.tsx",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,css}\""
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "unrs-resolver"
+    ]
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  }
+}

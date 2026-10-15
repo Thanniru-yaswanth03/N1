@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: n1-backend-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: pnpm install && pnpm build:api
+    startCommand: pnpm start:api
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: STORAGE_DRIVER
+        value: local
+      - key: LOCAL_STORAGE_PATH
+        value: ./storage/drops
+      - key: CLEANUP_INTERVAL_SECONDS
+        value: 60
+      - key: TOMBSTONE_RETENTION_SECONDS
+        value: 86400
+      - key: MONGODB_URI
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: API_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PASSWORD_PEPPER
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_API_KEY
+        generateValue: true

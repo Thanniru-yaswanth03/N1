@@ -1,0 +1,419 @@
+import { Server as HttpServer } from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
+import { IncomingMessage } from 'http';
+import { boardRoomService } from '../services/board-room.service.js';
+import { boardSocketClientMessageSchema } from '@n1/validation';
+import {
+  BoardElement,
+  BoardTemplate,
+  ConnectedBoardUser,
+  BoardSocketClientMessage,
+  BoardSocketServerMessage,
+} from '@n1/shared';
+
+const ANONYMOUS_NAMES = [
+  'Anonymous Falcon',
+  'Anonymous Lynx',
+  'Anonymous Otter',
+  'Anonymous Eagle',
+  'Anonymous Fox',
+  'Anonymous Panda',
+  'Anonymous Badger',
+  'Anonymous Hawk',
+  'Anonymous Tiger',
+  'Anonymous Wolf',
+  'Anonymous Dolphin',
+  'Anonymous Bear',
+];
+
+const ANONYMOUS_COLORS = [
+  '#a855f7', // Purple
+  '#38bdf8', // Cyan
+  '#34d399', // Emerald
+  '#fbbf24', // Gold
+  '#f43f5e', // Rose
+  '#ec4899', // Pink
+  '#6366f1', // Indigo
+  '#14b8a6', // Teal
+];
+
+interface ClientSession {
+  ws: WebSocket;
+  userId: string;
+  userName: string;
+  userColor: string;
+  roomCode: string | null;
+  isAlive: boolean;
+  messageCount: number;
+  windowStart: number;
+}
+
+interface SessionWebSocket extends WebSocket {
+  __session?: ClientSession;
+}
+
+export class BoardWebSocketManager {
+  private wss: WebSocketServer | null = null;
+  private roomClients = new Map<string, Set<ClientSession>>();
+  private saveDebounceTimers = new Map<string, NodeJS.Timeout>();
+  private pendingElements = new Map<string, BoardElement[]>();
+
+  init(server: HttpServer): WebSocketServer {
+    this.wss = new WebSocketServer({ noServer: true });
+
+    server.on('upgrade', (request: IncomingMessage, socket, head) => {
+      const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
+      if (url.pathname === '/ws/board') {
+        this.wss?.handleUpgrade(request, socket, head, ws => {
+          this.wss?.emit('connection', ws, request);
+        });
+      }
+    });
+
+    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+      this.handleConnection(ws, req);
+    });
+
+    // Heartbeat check every 30 seconds
+    const pingInterval = setInterval(() => {
+      if (!this.wss) return;
+      this.wss.clients.forEach(client => {
+        const session = (client as SessionWebSocket).__session;
+        if (!session) return;
+        if (session.isAlive === false) {
+          return client.terminate();
+        }
+        session.isAlive = false;
+        client.ping();
+      });
+    }, 30000);
+
+    this.wss.on('close', () => {
+      clearInterval(pingInterval);
+    });
+
+    return this.wss;
+  }
+
+  private handleConnection(ws: WebSocket, req: IncomingMessage) {
+    const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    const queryRoom = url.searchParams.get('room')?.toUpperCase().trim() || null;
+    const queryName = url.searchParams.get('name')?.trim() || null;
+
+    const session: ClientSession = {
+      ws,
+      userId: `u_${Math.random().toString(36).substring(2, 9)}`,
+      userName:
+        queryName || ANONYMOUS_NAMES[Math.floor(Math.random() * ANONYMOUS_NAMES.length)]!,
+      userColor:
+        ANONYMOUS_COLORS[Math.floor(Math.random() * ANONYMOUS_COLORS.length)]!,
+      roomCode: null,
+      isAlive: true,
+      messageCount: 0,
+      windowStart: Date.now(),
+    };
+
+    (ws as SessionWebSocket).__session = session;
+
+    ws.on('pong', () => {
+      session.isAlive = true;
+    });
+
+    ws.on('message', async (data: Buffer | string) => {
+      // 1. Rate limiting: Max 60 messages per second per client
+      const now = Date.now();
+      if (now - session.windowStart > 1000) {
+        session.windowStart = now;
+        session.messageCount = 1;
+      } else {
+        session.messageCount++;
+        if (session.messageCount > 60) {
+          this.send(ws, {
+            type: 'ERROR',
+            message: 'Rate limit exceeded: too many socket messages',
+          });
+          return;
+        }
+      }
+
+      // 2. Payload JSON Parsing & Zod Schema Validation
+      let raw: unknown;
+      try {
+        raw = JSON.parse(data.toString());
+      } catch {
+        this.send(ws, {
+          type: 'ERROR',
+          message: 'Malformed JSON payload',
+        });
+        return;
+      }
+
+      const parseResult = boardSocketClientMessageSchema.safeParse(raw);
+      if (!parseResult.success) {
+        this.send(ws, {
+          type: 'ERROR',
+          message: 'Invalid socket payload: ' + parseResult.error.issues[0]?.message,
+        });
+        return;
+      }
+
+      const message = parseResult.data as BoardSocketClientMessage;
+
+      // 3. Authorization: Client must be in a room to perform operations other than JOIN
+      if (message.type !== 'JOIN' && !session.roomCode) {
+        this.send(ws, {
+          type: 'ERROR',
+          message: 'Unauthorized: must join a room first',
+        });
+        return;
+      }
+
+      await this.handleClientMessage(session, message);
+    });
+
+    ws.on('close', () => {
+      this.handleDisconnect(session);
+    });
+
+    // If query room was provided in handshake URL, join immediately
+    if (queryRoom && /^[A-Z0-9]{6}$/.test(queryRoom)) {
+      this.joinRoom(session, queryRoom);
+    }
+  }
+
+  private async joinRoom(session: ClientSession, roomCode: string) {
+    // Leave previous room if joined
+    if (session.roomCode) {
+      this.leaveRoom(session);
+    }
+
+    const roomDetail = await boardRoomService.getRoom(roomCode);
+    if (!roomDetail) {
+      this.send(session.ws, {
+        type: 'ERROR',
+        message: 'Study room not found',
+      });
+      session.ws.close(4004, 'Room not found');
+      return;
+    }
+
+    if (roomDetail.isExpired) {
+      this.send(session.ws, {
+        type: 'ROOM_EXPIRED',
+      });
+      session.ws.close(4010, 'Room expired');
+      return;
+    }
+
+    session.roomCode = roomCode;
+
+    if (!this.roomClients.has(roomCode)) {
+      this.roomClients.set(roomCode, new Set());
+    }
+    const clients = this.roomClients.get(roomCode)!;
+    clients.add(session);
+
+    const currentUser: ConnectedBoardUser = {
+      id: session.userId,
+      name: session.userName,
+      color: session.userColor,
+    };
+
+    const activeUsers: ConnectedBoardUser[] = Array.from(clients).map(c => ({
+      id: c.userId,
+      name: c.userName,
+      color: c.userColor,
+    }));
+
+    // Send full room state to the newly joined client
+    this.send(session.ws, {
+      type: 'ROOM_STATE',
+      room: {
+        code: roomDetail.code,
+        title: roomDetail.title,
+        template: roomDetail.template as BoardTemplate,
+        elementCount: roomDetail.elements.length,
+        createdAt: roomDetail.createdAt,
+        expiresAt: roomDetail.expiresAt,
+        isExpired: roomDetail.isExpired,
+      },
+      elements: this.pendingElements.get(roomCode) || roomDetail.elements,
+      users: activeUsers,
+      currentUser,
+    });
+
+    // Notify other peers in this room
+    this.broadcastToRoom(
+      roomCode,
+      {
+        type: 'USER_JOINED',
+        user: currentUser,
+      },
+      session.userId
+    );
+  }
+
+  private leaveRoom(session: ClientSession) {
+    if (!session.roomCode) return;
+    const roomCode = session.roomCode;
+    const clients = this.roomClients.get(roomCode);
+    if (clients) {
+      clients.delete(session);
+      if (clients.size === 0) {
+        this.roomClients.delete(roomCode);
+        // Flush any pending elements to database
+        this.flushPendingElements(roomCode);
+      } else {
+        this.broadcastToRoom(roomCode, {
+          type: 'USER_LEFT',
+          userId: session.userId,
+        });
+      }
+    }
+    session.roomCode = null;
+  }
+
+  private handleDisconnect(session: ClientSession) {
+    this.leaveRoom(session);
+  }
+
+  private async handleClientMessage(
+    session: ClientSession,
+    msg: BoardSocketClientMessage
+  ) {
+    switch (msg.type) {
+      case 'JOIN': {
+        if (msg.userName) session.userName = msg.userName;
+        if (msg.userColor) session.userColor = msg.userColor;
+        await this.joinRoom(session, msg.roomCode.toUpperCase().trim());
+        break;
+      }
+
+      case 'CURSOR_MOVE': {
+        if (!session.roomCode) return;
+        this.broadcastToRoom(
+          session.roomCode,
+          {
+            type: 'USER_CURSOR',
+            userId: session.userId,
+            userName: session.userName,
+            userColor: session.userColor,
+            x: msg.x,
+            y: msg.y,
+          },
+          session.userId
+        );
+        break;
+      }
+
+      case 'ELEMENTS_UPDATE': {
+        if (!session.roomCode) return;
+        this.pendingElements.set(session.roomCode, msg.elements);
+        this.scheduleDebouncedSave(session.roomCode, msg.elements);
+
+        this.broadcastToRoom(
+          session.roomCode,
+          {
+            type: 'ELEMENTS_SYNC',
+            elements: msg.elements,
+          },
+          session.userId
+        );
+        break;
+      }
+
+      case 'ELEMENT_CHANGE': {
+        if (!session.roomCode) return;
+        this.broadcastToRoom(
+          session.roomCode,
+          {
+            type: 'ELEMENT_SYNC',
+            element: msg.element,
+            action: msg.action,
+          },
+          session.userId
+        );
+        break;
+      }
+
+      case 'CLEAR_BOARD': {
+        if (!session.roomCode) return;
+        this.pendingElements.set(session.roomCode, []);
+        await boardRoomService.clearElements(session.roomCode);
+
+        this.broadcastToRoom(session.roomCode, {
+          type: 'BOARD_CLEARED',
+        });
+        break;
+      }
+    }
+  }
+
+  private scheduleDebouncedSave(roomCode: string, elements: BoardElement[]) {
+    const existing = this.saveDebounceTimers.get(roomCode);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        await boardRoomService.updateElements(roomCode, elements);
+        this.saveDebounceTimers.delete(roomCode);
+      } catch (err) {
+        console.error(`[BoardSocket] Failed to persist elements for room ${roomCode}:`, err);
+      }
+    }, 2000); // 2 second debounce for database efficiency
+
+    this.saveDebounceTimers.set(roomCode, timer);
+  }
+
+  private async flushPendingElements(roomCode: string) {
+    const elements = this.pendingElements.get(roomCode);
+    if (elements) {
+      const timer = this.saveDebounceTimers.get(roomCode);
+      if (timer) clearTimeout(timer);
+      this.saveDebounceTimers.delete(roomCode);
+      try {
+        await boardRoomService.updateElements(roomCode, elements);
+      } catch (err) {
+        console.error(`[BoardSocket] Flush error for room ${roomCode}:`, err);
+      }
+      this.pendingElements.delete(roomCode);
+    }
+  }
+
+  private broadcastToRoom(
+    roomCode: string,
+    message: BoardSocketServerMessage,
+    excludeUserId?: string
+  ) {
+    const clients = this.roomClients.get(roomCode);
+    if (!clients) return;
+
+    const data = JSON.stringify(message);
+    clients.forEach(client => {
+      if (client.userId !== excludeUserId && client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(data);
+      }
+    });
+  }
+
+  private send(ws: WebSocket, message: BoardSocketServerMessage) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(message));
+    }
+  }
+
+  getMetrics(): { activeRooms: number; connectionCount: number } {
+    let connectionCount = 0;
+    this.roomClients.forEach(set => {
+      connectionCount += set.size;
+    });
+    return {
+      activeRooms: this.roomClients.size,
+      connectionCount,
+    };
+  }
+}
+
+export const boardWebSocketManager = new BoardWebSocketManager();
