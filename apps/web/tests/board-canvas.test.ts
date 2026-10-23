@@ -256,5 +256,78 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
       expect(autoWidth).toBeGreaterThan(300);
       expect(autoHeight).toBe(3 * 22 + 12);
     });
+
+    it('preserves shape dimensions while saving shape text content', () => {
+      const elements: BoardElement[] = [
+        {
+          id: 'shape_box_1',
+          type: 'shape',
+          shapeType: 'rectangle',
+          x: 100,
+          y: 100,
+          width: 200,
+          height: 150,
+          color: '#00f0ff',
+          content: '',
+          zIndex: 1,
+        },
+      ];
+
+      const commitSave = (list: BoardElement[], editId: string, text: string) => {
+        const trimmed = text.trim();
+        return list.map(el => {
+          if (el.id === editId) {
+            const finalWidth = el.type === 'shape' ? el.width : Math.max(el.width || 140, 100);
+            const finalHeight = el.type === 'shape' ? el.height : Math.max(36, 50);
+            return { ...el, content: trimmed, width: finalWidth, height: finalHeight };
+          }
+          return el;
+        });
+      };
+
+      const result = commitSave(elements, 'shape_box_1', 'Process Node A');
+      expect(result.length).toBe(1);
+      expect(result[0]?.content).toBe('Process Node A');
+      expect(result[0]?.width).toBe(200);
+      expect(result[0]?.height).toBe(150);
+    });
+
+    it('prevents premature blur deletion within initial mouse-click lifecycle (<450ms)', () => {
+      const creationTime = 1000;
+      const blurTimeFast = 1100; // 100ms after creation (pointerup/blur)
+      const blurTimeSlow = 2500; // 1500ms after creation (deliberate blur outside)
+
+      const shouldProtectFromBlur = (createdAt: number, now: number, text: string) => {
+        return now - createdAt < 450 && !text.trim();
+      };
+
+      expect(shouldProtectFromBlur(creationTime, blurTimeFast, '')).toBe(true);
+      expect(shouldProtectFromBlur(creationTime, blurTimeSlow, '')).toBe(false);
+      expect(shouldProtectFromBlur(creationTime, blurTimeFast, 'User typed text')).toBe(false);
+    });
+
+    it('enables direct typing into selected shape, sticky note, or text', () => {
+      const shape: BoardElement = {
+        id: 'shape_1',
+        type: 'shape',
+        shapeType: 'rectangle',
+        x: 50,
+        y: 50,
+        width: 100,
+        height: 100,
+        content: '',
+        color: '#00f0ff',
+        zIndex: 1,
+      };
+
+      const canDirectType = (el: BoardElement) => {
+        return el.type === 'text' || el.type === 'sticky' || el.type === 'shape';
+      };
+
+      expect(canDirectType(shape)).toBe(true);
+      expect(canDirectType({ ...shape, type: 'text' })).toBe(true);
+      expect(canDirectType({ ...shape, type: 'sticky' })).toBe(true);
+      expect(canDirectType({ ...shape, type: 'stroke' })).toBe(false);
+    });
   });
 });
