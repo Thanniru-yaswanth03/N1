@@ -392,6 +392,7 @@ export default function StudyBoardRoomPage() {
           elements={elements}
           setElements={setElements}
           activeTool={activeTool}
+          setActiveTool={setActiveTool}
           activeColor={activeColor}
           strokeWidth={strokeWidth}
           activeShape={activeShape}

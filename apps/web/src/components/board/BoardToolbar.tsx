@@ -307,7 +307,7 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('sticky')}
-              title="Add Sticky Note (S)"
+              title="Add Sticky Note (N)"
               aria-label="Sticky note tool"
               aria-pressed={activeTool === 'sticky'}
               className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${

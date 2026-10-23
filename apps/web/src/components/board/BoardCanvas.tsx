@@ -8,6 +8,7 @@ export interface BoardCanvasProps {
   elements: BoardElement[];
   setElements: React.Dispatch<React.SetStateAction<BoardElement[]>>;
   activeTool: CanvasTool;
+  setActiveTool?: (tool: CanvasTool) => void;
   activeColor: string;
   strokeWidth: number;
   activeShape: BoardShapeType;
@@ -19,10 +20,54 @@ export interface BoardCanvasProps {
   onHistoryPush?: (elements: BoardElement[]) => void;
 }
 
+export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
+interface HandleInfo {
+  id: ResizeHandle;
+  x: number;
+  y: number;
+  cursor: string;
+}
+
+// Word wrapping helper for canvas text rendering
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string[] {
+  if (!text) return [];
+  const paragraphs = text.split('\n');
+  const resultLines: string[] = [];
+
+  for (const para of paragraphs) {
+    if (!para) {
+      resultLines.push('');
+      continue;
+    }
+    const words = para.split(' ');
+    let currentLine = words[0] || '';
+
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i] || '';
+      const testLine = `${currentLine} ${word}`;
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width <= maxWidth) {
+        currentLine = testLine;
+      } else {
+        resultLines.push(currentLine);
+        currentLine = word;
+      }
+    }
+    resultLines.push(currentLine);
+  }
+  return resultLines;
+}
+
 export function BoardCanvas({
   elements,
   setElements,
   activeTool,
+  setActiveTool,
   activeColor,
   strokeWidth,
   activeShape,
@@ -35,6 +80,7 @@ export function BoardCanvas({
 }: BoardCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Pan offsets
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -47,14 +93,29 @@ export function BoardCanvas({
   const initialPinchDistRef = useRef<number | null>(null);
   const initialZoomRef = useRef<number>(zoom);
 
-  // Selection & Editing
+  // Selection state
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDraggingElement, setIsDraggingElement] = useState(false);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [dragStartMap, setDragStartMap] = useState<Map<string, { x: number; y: number }>>(new Map());
+
+  // Resizing state
+  const [resizingHandle, setResizingHandle] = useState<ResizeHandle | null>(null);
+  const [resizeOrigin, setResizeOrigin] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const [hoveredHandle, setHoveredHandle] = useState<ResizeHandle | null>(null);
 
   // In-place text/sticky editing
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [editingOriginalText, setEditingOriginalText] = useState('');
 
   // Active drawing stroke / shape
   const [isDrawing, setIsDrawing] = useState(false);
@@ -65,34 +126,14 @@ export function BoardCanvas({
   const [isAreaErasing, setIsAreaErasing] = useState(false);
   const [areaEraseBox, setAreaEraseBox] = useState<{ start: BoardPoint; current: BoardPoint } | null>(null);
 
-  // Check if an element intersects a rectangular bounding box
-  const isElementInBox = useCallback((
-    el: BoardElement,
-    minX: number,
-    minY: number,
-    maxX: number,
-    maxY: number
-  ): boolean => {
-    if (el.type === 'stroke' && el.points && el.points.length > 0) {
-      for (const p of el.points) {
-        const px = el.x + p.x;
-        const py = el.y + p.y;
-        if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
-          return true;
-        }
-      }
-      return el.x >= minX && el.x <= maxX && el.y >= minY && el.y <= maxY;
+  // Synchronize selectedId with selectedIds set
+  useEffect(() => {
+    if (selectedId) {
+      setSelectedIds(prev => (prev.has(selectedId) ? prev : new Set([selectedId])));
     } else {
-      const w = el.width || 40;
-      const h = el.height || 40;
-      return (
-        el.x <= maxX &&
-        el.x + w >= minX &&
-        el.y <= maxY &&
-        el.y + h >= minY
-      );
+      setSelectedIds(new Set());
     }
-  }, []);
+  }, [selectedId]);
 
   // Convert screen coordinates to canvas world coordinates
   const screenToWorld = useCallback(
@@ -108,6 +149,180 @@ export function BoardCanvas({
     },
     [pan, zoom]
   );
+
+  // Get 8 resize handles for an element
+  const getHandles = useCallback((el: BoardElement): HandleInfo[] => {
+    const w = el.width || 40;
+    const h = el.height || 40;
+    const x = el.x;
+    const y = el.y;
+
+    return [
+      { id: 'nw', x, y, cursor: 'nwse-resize' },
+      { id: 'n', x: x + w / 2, y, cursor: 'ns-resize' },
+      { id: 'ne', x: x + w, y, cursor: 'nesw-resize' },
+      { id: 'e', x: x + w, y: y + h / 2, cursor: 'ew-resize' },
+      { id: 'se', x: x + w, y: y + h, cursor: 'nwse-resize' },
+      { id: 's', x: x + w / 2, y: y + h, cursor: 'ns-resize' },
+      { id: 'sw', x, y: y + h, cursor: 'nesw-resize' },
+      { id: 'w', x, y: y + h / 2, cursor: 'ew-resize' },
+    ];
+  }, []);
+
+  // Find handle under world coordinate
+  const findHandleAt = useCallback(
+    (world: BoardPoint, el: BoardElement): HandleInfo | null => {
+      const radius = 10 / zoom;
+      const handles = getHandles(el);
+      for (const h of handles) {
+        if (Math.hypot(world.x - h.x, world.y - h.y) <= radius) {
+          return h;
+        }
+      }
+      return null;
+    },
+    [getHandles, zoom]
+  );
+
+  // Find element at world coordinate
+  const findElementAt = useCallback(
+    (point: BoardPoint): BoardElement | null => {
+      const hitPadding = 8;
+      for (let i = elements.length - 1; i >= 0; i--) {
+        const el = elements[i];
+        if (!el) continue;
+
+        if (el.type === 'stroke' && el.points && el.points.length > 0) {
+          for (const p of el.points) {
+            const dx = el.x + p.x - point.x;
+            const dy = el.y + p.y - point.y;
+            if (Math.hypot(dx, dy) < 16) {
+              return el;
+            }
+          }
+        } else if (el.type === 'arrow' || el.type === 'line') {
+          const minX = Math.min(el.x, el.x + el.width) - hitPadding;
+          const maxX = Math.max(el.x, el.x + el.width) + hitPadding;
+          const minY = Math.min(el.y, el.y + el.height) - hitPadding;
+          const maxY = Math.max(el.y, el.y + el.height) + hitPadding;
+          if (point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY) {
+            return el;
+          }
+        } else {
+          const w = Math.max(30, el.width || 40);
+          const h = Math.max(24, el.height || 40);
+          if (
+            point.x >= el.x - hitPadding &&
+            point.x <= el.x + w + hitPadding &&
+            point.y >= el.y - hitPadding &&
+            point.y <= el.y + h + hitPadding
+          ) {
+            return el;
+          }
+        }
+      }
+      return null;
+    },
+    [elements]
+  );
+
+  // Check if an element intersects a rectangular bounding box
+  const isElementInBox = useCallback(
+    (
+      el: BoardElement,
+      minX: number,
+      minY: number,
+      maxX: number,
+      maxY: number
+    ): boolean => {
+      if (el.type === 'stroke' && el.points && el.points.length > 0) {
+        for (const p of el.points) {
+          const px = el.x + p.x;
+          const py = el.y + p.y;
+          if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+            return true;
+          }
+        }
+        return el.x >= minX && el.x <= maxX && el.y >= minY && el.y <= maxY;
+      } else {
+        const w = el.width || 40;
+        const h = el.height || 40;
+        return (
+          el.x <= maxX &&
+          el.x + w >= minX &&
+          el.y <= maxY &&
+          el.y + h >= minY
+        );
+      }
+    },
+    []
+  );
+
+  // Start in-place editing on an element
+  const startEditing = useCallback(
+    (el: BoardElement, initialText?: string) => {
+      setEditingId(el.id);
+      setSelectedId(el.id);
+      const textToUse = initialText !== undefined ? initialText : el.content || '';
+      setEditingText(textToUse);
+      setEditingOriginalText(el.content || '');
+      setActiveTool?.('select');
+      setTimeout(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.select();
+      }, 30);
+    },
+    [setActiveTool]
+  );
+
+  // Save inline text editing
+  const saveEditing = useCallback(() => {
+    if (!editingId) return;
+
+    setElements(prev => {
+      const next = prev.map(el => {
+        if (el.id === editingId) {
+          const trimmed = editingText.trim();
+          // If empty, keep placeholder content or leave blank with min dimensions
+          return {
+            ...el,
+            content: trimmed,
+            updatedAt: Date.now(),
+          };
+        }
+        return el;
+      });
+      onElementsChange?.(next);
+      onHistoryPush?.(next);
+      return next;
+    });
+
+    setEditingId(null);
+    setEditingText('');
+    setEditingOriginalText('');
+  }, [editingId, editingText, onElementsChange, onHistoryPush, setElements]);
+
+  // Cancel inline text editing without saving
+  const cancelEditing = useCallback(() => {
+    if (!editingId) return;
+
+    setElements(prev =>
+      prev.map(el => {
+        if (el.id === editingId) {
+          return {
+            ...el,
+            content: editingOriginalText,
+            updatedAt: Date.now(),
+          };
+        }
+        return el;
+      })
+    );
+
+    setEditingId(null);
+    setEditingText('');
+    setEditingOriginalText('');
+  }, [editingId, editingOriginalText, setElements]);
 
   // Resize canvas to fill container with devicePixelRatio
   useEffect(() => {
@@ -187,21 +402,147 @@ export function BoardCanvas({
     return () => window.removeEventListener('n1:board-fit-screen', handleFitToScreen);
   }, [elements, setZoom]);
 
-  // Keyboard listeners (Space for pan, Delete/Backspace to delete selected element)
+  // Comprehensive keyboard listeners with text-input protection
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (editingId) return; // Don't intercept when typing in note
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable ||
+        Boolean(editingId);
 
+      // Keys handled when typing inside active in-place textarea
+      if (editingId) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelEditing();
+          return;
+        }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || !e.shiftKey)) {
+          e.preventDefault();
+          saveEditing();
+          return;
+        }
+        return;
+      }
+
+      // If user is typing in another input/modal, do not intercept
+      if (isInput) return;
+
+      // Spacebar for hand pan
       if (e.code === 'Space' && !isSpacePressed) {
         setIsSpacePressed(true);
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+        return;
+      }
+
+      // Enter key: edit selected text/sticky/shape
+      if (e.key === 'Enter' && selectedId) {
+        const selectedEl = elements.find(el => el.id === selectedId);
+        if (
+          selectedEl &&
+          (selectedEl.type === 'text' ||
+            selectedEl.type === 'sticky' ||
+            selectedEl.type === 'shape')
+        ) {
+          e.preventDefault();
+          startEditing(selectedEl);
+          return;
+        }
+      }
+
+      // Direct typing into selected text element
+      if (
+        selectedId &&
+        e.key.length === 1 &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        e.key !== ' '
+      ) {
+        const selectedEl = elements.find(el => el.id === selectedId);
+        if (selectedEl && selectedEl.type === 'text') {
+          e.preventDefault();
+          startEditing(selectedEl, e.key);
+          return;
+        }
+      }
+
+      // Escape: deselect or return to select tool
+      if (e.key === 'Escape') {
+        if (selectedId) {
+          setSelectedId(null);
+          setSelectedIds(new Set());
+        } else if (activeTool !== 'select') {
+          setActiveTool?.('select');
+        }
+        return;
+      }
+
+      // Delete / Backspace: delete selected elements safely
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
+        e.preventDefault();
         setElements(prev => {
-          const next = prev.filter(el => el.id !== selectedId);
+          const next = prev.filter(el => !selectedIds.has(el.id));
           onElementsChange?.(next);
           onHistoryPush?.(next);
           return next;
         });
         setSelectedId(null);
+        setSelectedIds(new Set());
+        return;
+      }
+
+      // Ctrl/Cmd + D: Duplicate selected elements
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D') && selectedId) {
+        e.preventDefault();
+        const elToDup = elements.find(el => el.id === selectedId);
+        if (elToDup) {
+          const dup: BoardElement = {
+            ...elToDup,
+            id: `${elToDup.type}_${Date.now()}`,
+            x: elToDup.x + 28,
+            y: elToDup.y + 28,
+            zIndex: elements.length + 1,
+            updatedAt: Date.now(),
+          };
+          setElements(prev => {
+            const next = [...prev, dup];
+            onElementsChange?.(next);
+            onHistoryPush?.(next);
+            return next;
+          });
+          setSelectedId(dup.id);
+          setSelectedIds(new Set([dup.id]));
+        }
+        return;
+      }
+
+      // Ctrl/Cmd + A: Select all elements
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        const allIds = new Set(elements.map(el => el.id));
+        setSelectedIds(allIds);
+        if (elements.length > 0 && elements[0]) {
+          setSelectedId(elements[0].id);
+        }
+        return;
+      }
+
+      // Single-key tool switches
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const key = e.key.toLowerCase();
+        if (key === 'v') setActiveTool?.('select');
+        else if (key === 'h') setActiveTool?.('hand');
+        else if (key === 'p') setActiveTool?.('pen');
+        else if (key === 'e') setActiveTool?.('eraser');
+        else if (key === 't') setActiveTool?.('text');
+        else if (key === 'n') setActiveTool?.('sticky');
+        else if (key === 'a') setActiveTool?.('arrow');
+        else if (key === 's') setActiveTool?.('shape');
+        else if (key === 'f') {
+          window.dispatchEvent(new CustomEvent('n1:board-fit-screen'));
+        }
       }
     };
 
@@ -217,7 +558,21 @@ export function BoardCanvas({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [editingId, isSpacePressed, selectedId, setElements, onElementsChange, onHistoryPush]);
+  }, [
+    activeTool,
+    cancelEditing,
+    editingId,
+    elements,
+    isSpacePressed,
+    onElementsChange,
+    onHistoryPush,
+    saveEditing,
+    selectedId,
+    selectedIds,
+    setActiveTool,
+    setElements,
+    startEditing,
+  ]);
 
   // Main Render Loop
   const render = useCallback(() => {
@@ -229,19 +584,19 @@ export function BoardCanvas({
     const width = canvas.width / (window.devicePixelRatio || 1);
     const height = canvas.height / (window.devicePixelRatio || 1);
 
-    // Clear
+    // Clear background
     ctx.clearRect(0, 0, width, height);
 
     ctx.save();
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
-    // Draw background dot grid
+    // Draw subtle dark dot grid
     const gridSize = 24;
     const startX = Math.floor(-pan.x / zoom / gridSize) * gridSize - gridSize * 2;
     const startY = Math.floor(-pan.y / zoom / gridSize) * gridSize - gridSize * 2;
-    const endX = startX + (width / zoom) + gridSize * 4;
-    const endY = startY + (height / zoom) + gridSize * 4;
+    const endX = startX + width / zoom + gridSize * 4;
+    const endY = startY + height / zoom + gridSize * 4;
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
     for (let x = startX; x < endX; x += gridSize) {
@@ -252,7 +607,7 @@ export function BoardCanvas({
       }
     }
 
-    // Render elements by zIndex
+    // Sort elements by zIndex
     const sorted = [...elements].sort((a, b) => a.zIndex - b.zIndex);
 
     sorted.forEach(el => {
@@ -298,13 +653,14 @@ export function BoardCanvas({
           ctx.arc(el.width / 2, 10, 3.5, 0, Math.PI * 2);
           ctx.fill();
 
-          // Content
-          if (el.content && el.id !== editingId) {
+          // Sticky Content (only when not editing)
+          if (el.id !== editingId) {
             ctx.fillStyle = '#ffffff';
             ctx.font = `${el.fontSize || 13}px sans-serif`;
-            const lines = el.content.split('\n');
-            lines.forEach((line, idx) => {
-              ctx.fillText(line, 12, 28 + idx * 18);
+            const content = el.content || 'Double click to edit';
+            const lines = wrapText(ctx, content, el.width - 24);
+            lines.slice(0, 8).forEach((line, idx) => {
+              ctx.fillText(line, 12, 30 + idx * 18);
             });
           }
           break;
@@ -347,13 +703,13 @@ export function BoardCanvas({
             const step = Math.PI / spikes;
             ctx.moveTo(cx, cy - outerR);
             for (let i = 0; i < spikes; i++) {
-              let x = cx + Math.cos(rot) * outerR;
-              let y = cy + Math.sin(rot) * outerR;
-              ctx.lineTo(x, y);
+              let sx = cx + Math.cos(rot) * outerR;
+              let sy = cy + Math.sin(rot) * outerR;
+              ctx.lineTo(sx, sy);
               rot += step;
-              x = cx + Math.cos(rot) * innerR;
-              y = cy + Math.sin(rot) * innerR;
-              ctx.lineTo(x, y);
+              sx = cx + Math.cos(rot) * innerR;
+              sy = cy + Math.sin(rot) * innerR;
+              ctx.lineTo(sx, sy);
               rot += step;
             }
             ctx.closePath();
@@ -366,12 +722,15 @@ export function BoardCanvas({
           }
           ctx.stroke();
 
+          // Shape Center Text
           if (el.content && el.id !== editingId) {
             ctx.fillStyle = '#ffffff';
-            ctx.font = `${el.fontSize || 13}px ${el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`;
+            ctx.font = `${el.fontSize || 13}px ${
+              el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'
+            }`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            const lines = el.content.split('\n');
+            const lines = wrapText(ctx, el.content, w - 16);
             const startY = h / 2 - ((lines.length - 1) * 16) / 2;
             lines.forEach((l, idx) => {
               ctx.fillText(l, w / 2, startY + idx * 16);
@@ -395,8 +754,14 @@ export function BoardCanvas({
           const headLength = 12;
           ctx.beginPath();
           ctx.moveTo(w, h);
-          ctx.lineTo(w - headLength * Math.cos(angle - Math.PI / 6), h - headLength * Math.sin(angle - Math.PI / 6));
-          ctx.lineTo(w - headLength * Math.cos(angle + Math.PI / 6), h - headLength * Math.sin(angle + Math.PI / 6));
+          ctx.lineTo(
+            w - headLength * Math.cos(angle - Math.PI / 6),
+            h - headLength * Math.sin(angle - Math.PI / 6)
+          );
+          ctx.lineTo(
+            w - headLength * Math.cos(angle + Math.PI / 6),
+            h - headLength * Math.sin(angle + Math.PI / 6)
+          );
           ctx.closePath();
           ctx.fillStyle = el.color || '#a855f7';
           ctx.fill();
@@ -404,37 +769,71 @@ export function BoardCanvas({
         }
 
         case 'text': {
-          if (el.content && el.id !== editingId) {
-            ctx.fillStyle = el.color || '#ffffff';
-            ctx.font = `${el.fontSize || 16}px ${el.fontFamily === 'mono' ? 'monospace' : 'sans-serif'}`;
-            const lines = el.content.split('\n');
-            lines.forEach((l, idx) => {
-              ctx.fillText(l, 0, 16 + idx * 20);
-            });
+          // Render text content if not currently being edited in DOM textarea
+          if (el.id !== editingId) {
+            const hasContent = Boolean(el.content && el.content.trim().length > 0);
+            const fontSize = el.fontSize || 16;
+            const fontFam = el.fontFamily === 'mono' ? 'monospace' : 'sans-serif';
+            const lineHeight = fontSize + 6;
+
+            if (hasContent) {
+              ctx.fillStyle = el.color || '#00f0ff';
+              ctx.font = `${fontSize}px ${fontFam}`;
+              const lines = wrapText(ctx, el.content || '', Math.max(120, el.width));
+              lines.forEach((l, idx) => {
+                ctx.fillText(l, 0, fontSize + idx * lineHeight);
+              });
+            } else {
+              // Empty text element placeholder (ensures user always sees and can click/edit it)
+              ctx.fillStyle = 'rgba(100, 116, 139, 0.7)';
+              ctx.font = `italic ${fontSize}px ${fontFam}`;
+              ctx.fillText('Type text here...', 0, fontSize);
+
+              // Subtle dotted guide box when unselected & empty
+              if (el.id !== selectedId) {
+                ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                ctx.strokeRect(-2, -2, el.width + 4, el.height + 4);
+                ctx.setLineDash([]);
+              }
+            }
           }
           break;
         }
       }
 
-      // Selection bounding box & handles
-      if (el.id === selectedId) {
+      // Selection bounding box & 8 functional resize handles
+      if (selectedIds.has(el.id)) {
+        const isSingleSelected = selectedIds.size === 1;
         ctx.strokeStyle = '#00f0ff';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1.5 / zoom;
+        ctx.setLineDash([4 / zoom, 4 / zoom]);
         ctx.strokeRect(-4, -4, el.width + 8, el.height + 8);
         ctx.setLineDash([]);
 
-        // Handle points on corners
-        ctx.fillStyle = '#ffffff';
-        const handles = [
-          [-4, -4],
-          [el.width + 4, -4],
-          [-4, el.height + 4],
-          [el.width + 4, el.height + 4],
-        ];
-        handles.forEach(([hx, hy]) => {
-          ctx.fillRect((hx || 0) - 3, (hy || 0) - 3, 6, 6);
-        });
+        if (isSingleSelected) {
+          // Render 8 Resize Handles on corners and edges
+          const handles = [
+            { x: -4, y: -4 },
+            { x: el.width / 2, y: -4 },
+            { x: el.width + 4, y: -4 },
+            { x: el.width + 4, y: el.height / 2 },
+            { x: el.width + 4, y: el.height + 4 },
+            { x: el.width / 2, y: el.height + 4 },
+            { x: -4, y: el.height + 4 },
+            { x: -4, y: el.height / 2 },
+          ];
+
+          const handleRadius = 4 / zoom;
+          handles.forEach(h => {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(h.x - handleRadius, h.y - handleRadius, handleRadius * 2, handleRadius * 2);
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 1.5 / zoom;
+            ctx.strokeRect(h.x - handleRadius, h.y - handleRadius, handleRadius * 2, handleRadius * 2);
+          });
+        }
       }
 
       ctx.restore();
@@ -517,7 +916,6 @@ export function BoardCanvas({
         ctx.save();
         ctx.translate(peer.cursor.x, peer.cursor.y);
 
-        // Pointer triangle
         ctx.fillStyle = peer.color || '#a855f7';
         ctx.beginPath();
         ctx.moveTo(0, 0);
@@ -526,7 +924,6 @@ export function BoardCanvas({
         ctx.closePath();
         ctx.fill();
 
-        // Name tag
         ctx.fillStyle = peer.color || '#a855f7';
         ctx.beginPath();
         ctx.roundRect(10, 12, peer.name.length * 6.5 + 8, 18, 4);
@@ -542,21 +939,21 @@ export function BoardCanvas({
 
     ctx.restore();
   }, [
-    elements,
-    pan,
-    zoom,
-    selectedId,
-    editingId,
-    isDrawing,
-    currentPoints,
-    drawStart,
     activeColor,
     activeTool,
-    strokeWidth,
-    peerUsers,
-    isAreaErasing,
     areaEraseBox,
+    currentPoints,
+    drawStart,
+    editingId,
+    elements,
+    isAreaErasing,
+    isDrawing,
     isElementInBox,
+    pan,
+    peerUsers,
+    selectedIds,
+    strokeWidth,
+    zoom,
   ]);
 
   // Request Animation Frame Render Loop
@@ -570,7 +967,7 @@ export function BoardCanvas({
     return () => cancelAnimationFrame(animId);
   }, [render]);
 
-  // Mouse wheel zoom
+  // Mouse wheel zoom & pan
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
@@ -584,42 +981,11 @@ export function BoardCanvas({
     }
   };
 
-  // Find element at world coordinate
-  const findElementAt = (point: BoardPoint): BoardElement | null => {
-    for (let i = elements.length - 1; i >= 0; i--) {
-      const el = elements[i];
-      if (!el) continue;
-
-      if (el.type === 'stroke' && el.points) {
-        // Distance check for stroke
-        for (const p of el.points) {
-          const dx = el.x + p.x - point.x;
-          const dy = el.y + p.y - point.y;
-          if (Math.sqrt(dx * dx + dy * dy) < 15) {
-            return el;
-          }
-        }
-      } else {
-        const w = el.width || 40;
-        const h = el.height || 40;
-        if (
-          point.x >= el.x &&
-          point.x <= el.x + w &&
-          point.y >= el.y &&
-          point.y <= el.y + h
-        ) {
-          return el;
-        }
-      }
-    }
-    return null;
-  };
-
-  // Pointer Down Handler (Touch, Stylus + Mouse unified)
+  // Pointer Down Handler
   const handlePointerDown = (e: React.PointerEvent) => {
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    // Multi-touch pinch-to-zoom initialization
+    // Multi-touch pinch-to-zoom
     if (activePointersRef.current.size === 2) {
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
@@ -639,9 +1005,10 @@ export function BoardCanvas({
       void _err;
     }
 
-    // If clicking on in-place editor, ignore
+    // If currently editing text and clicked outside editor, commit changes cleanly
     if (editingId) {
       saveEditing();
+      return;
     }
 
     const world = screenToWorld(e.clientX, e.clientY);
@@ -655,64 +1022,101 @@ export function BoardCanvas({
 
     // Select mode
     if (activeTool === 'select') {
+      // 1. Check if clicking on one of the 8 resize handles of the currently selected element
+      if (selectedId) {
+        const selectedEl = elements.find(el => el.id === selectedId);
+        if (selectedEl) {
+          const handle = findHandleAt(world, selectedEl);
+          if (handle) {
+            setResizingHandle(handle.id);
+            setResizeOrigin({
+              x: selectedEl.x,
+              y: selectedEl.y,
+              width: selectedEl.width,
+              height: selectedEl.height,
+              startX: world.x,
+              startY: world.y,
+            });
+            return;
+          }
+        }
+      }
+
+      // 2. Check if clicking on an element
       const hit = findElementAt(world);
       if (hit) {
-        setSelectedId(hit.id);
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          // Toggle in multi-selection
+          setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(hit.id)) {
+              next.delete(hit.id);
+            } else {
+              next.add(hit.id);
+            }
+            return next;
+          });
+          setSelectedId(hit.id);
+        } else {
+          // Single selection
+          setSelectedId(hit.id);
+          setSelectedIds(new Set([hit.id]));
+        }
+
+        // Prepare drag map for single or multi-element drag
         setIsDraggingElement(true);
         setDragOffset({ x: world.x - hit.x, y: world.y - hit.y });
+        const startMap = new Map<string, { x: number; y: number }>();
+        elements.forEach(el => {
+          if (el.id === hit.id || selectedIds.has(el.id)) {
+            startMap.set(el.id, { x: el.x, y: el.y });
+          }
+        });
+        setDragStartMap(startMap);
       } else {
+        // Clicked on empty canvas -> deselect
         setSelectedId(null);
+        setSelectedIds(new Set());
       }
       return;
     }
 
-    // Eraser mode (Supports single-click tap delete & drag box area delete)
+    // Eraser mode
     if (activeTool === 'eraser') {
       setIsAreaErasing(true);
       setAreaEraseBox({ start: world, current: world });
       return;
     }
 
-    // Sticky Note creation
-    if (activeTool === 'sticky') {
-      const newSticky: BoardElement = {
-        id: `sticky_${Date.now()}`,
-        type: 'sticky',
-        x: world.x - 90,
-        y: world.y - 60,
-        width: 180,
-        height: 120,
-        color: activeColor === '#ffffff' ? '#fbbf24' : activeColor,
-        fillColor: `${activeColor}26`,
-        strokeWidth: 2,
-        content: 'New Note\nDouble click to edit',
-        fontSize: 13,
-        zIndex: elements.length + 1,
-        updatedAt: Date.now(),
-      };
-
-      setElements(prev => {
-        const next = [...prev, newSticky];
-        onElementsChange?.(next);
-        onHistoryPush?.(next);
-        return next;
-      });
-      setSelectedId(newSticky.id);
-      return;
-    }
-
     // Text block creation
     if (activeTool === 'text') {
+      // If clicking directly on an existing text/sticky element, select & edit it instead of creating duplicates
+      const hit = findElementAt(world);
+      if (hit && (hit.type === 'text' || hit.type === 'sticky')) {
+        startEditing(hit);
+        return;
+      }
+
+      // Check nearby text elements to avoid accidental overlapping cascade
+      const targetX = Math.round(world.x);
+      let targetY = Math.round(world.y);
+      const isNearby = elements.some(
+        el => el.type === 'text' && Math.hypot(el.x - targetX, el.y - targetY) < 28
+      );
+      if (isNearby) {
+        targetY += 36;
+      }
+
       const newText: BoardElement = {
         id: `text_${Date.now()}`,
         type: 'text',
-        x: world.x,
-        y: world.y,
-        width: 160,
-        height: 40,
+        x: targetX,
+        y: targetY,
+        width: 180,
+        height: 44,
         color: activeColor,
         strokeWidth: 2,
-        content: 'Type text here...',
+        content: '',
         fontSize: 16,
         fontFamily: 'sans',
         zIndex: elements.length + 1,
@@ -725,9 +1129,48 @@ export function BoardCanvas({
         onHistoryPush?.(next);
         return next;
       });
+
+      // Select and immediately enter editing mode
       setSelectedId(newText.id);
-      setEditingId(newText.id);
-      setEditingText(newText.content || '');
+      setSelectedIds(new Set([newText.id]));
+      startEditing(newText, '');
+      return;
+    }
+
+    // Sticky Note creation
+    if (activeTool === 'sticky') {
+      const hit = findElementAt(world);
+      if (hit && hit.type === 'sticky') {
+        startEditing(hit);
+        return;
+      }
+
+      const newSticky: BoardElement = {
+        id: `sticky_${Date.now()}`,
+        type: 'sticky',
+        x: Math.round(world.x - 90),
+        y: Math.round(world.y - 60),
+        width: 180,
+        height: 120,
+        color: activeColor === '#ffffff' ? '#fbbf24' : activeColor,
+        fillColor: `${activeColor}26`,
+        strokeWidth: 2,
+        content: 'New Note',
+        fontSize: 13,
+        zIndex: elements.length + 1,
+        updatedAt: Date.now(),
+      };
+
+      setElements(prev => {
+        const next = [...prev, newSticky];
+        onElementsChange?.(next);
+        onHistoryPush?.(next);
+        return next;
+      });
+
+      setSelectedId(newSticky.id);
+      setSelectedIds(new Set([newSticky.id]));
+      startEditing(newSticky);
       return;
     }
 
@@ -737,13 +1180,13 @@ export function BoardCanvas({
     setCurrentPoints([world]);
   };
 
-  // Pointer Move Handler (Touch, Stylus + Mouse unified)
+  // Pointer Move Handler
   const handlePointerMove = (e: React.PointerEvent) => {
     if (activePointersRef.current.has(e.pointerId)) {
       activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
 
-    // Two-finger pinch-to-zoom calculation
+    // Pinch-to-zoom calculation
     if (activePointersRef.current.size === 2 && initialPinchDistRef.current) {
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
@@ -774,23 +1217,95 @@ export function BoardCanvas({
       return;
     }
 
-    if (isDraggingElement && selectedId) {
+    // Resizing active element via handles
+    if (resizingHandle && resizeOrigin && selectedId) {
+      const dx = world.x - resizeOrigin.startX;
+      const dy = world.y - resizeOrigin.startY;
+
+      let nextX = resizeOrigin.x;
+      let nextY = resizeOrigin.y;
+      let nextW = resizeOrigin.width;
+      let nextH = resizeOrigin.height;
+
+      const minW = 40;
+      const minH = 24;
+
+      if (resizingHandle.includes('e')) {
+        nextW = Math.max(minW, resizeOrigin.width + dx);
+      }
+      if (resizingHandle.includes('s')) {
+        nextH = Math.max(minH, resizeOrigin.height + dy);
+      }
+      if (resizingHandle.includes('w')) {
+        const potentialW = resizeOrigin.width - dx;
+        if (potentialW >= minW) {
+          nextW = potentialW;
+          nextX = resizeOrigin.x + dx;
+        } else {
+          nextW = minW;
+          nextX = resizeOrigin.x + (resizeOrigin.width - minW);
+        }
+      }
+      if (resizingHandle.includes('n')) {
+        const potentialH = resizeOrigin.height - dy;
+        if (potentialH >= minH) {
+          nextH = potentialH;
+          nextY = resizeOrigin.y + dy;
+        } else {
+          nextH = minH;
+          nextY = resizeOrigin.y + (resizeOrigin.height - minH);
+        }
+      }
+
       setElements(prev =>
-        prev.map(el => {
-          if (el.id === selectedId) {
-            return {
-              ...el,
-              x: world.x - dragOffset.x,
-              y: world.y - dragOffset.y,
-              updatedAt: Date.now(),
-            };
-          }
-          return el;
-        })
+        prev.map(el =>
+          el.id === selectedId
+            ? { ...el, x: Math.round(nextX), y: Math.round(nextY), width: Math.round(nextW), height: Math.round(nextH), updatedAt: Date.now() }
+            : el
+        )
       );
       return;
     }
 
+    // Dragging elements
+    if (isDraggingElement && selectedId) {
+      const mainStart = dragStartMap.get(selectedId);
+      if (mainStart) {
+        const newMainX = world.x - dragOffset.x;
+        const newMainY = world.y - dragOffset.y;
+        const deltaX = newMainX - mainStart.x;
+        const deltaY = newMainY - mainStart.y;
+
+        setElements(prev =>
+          prev.map(el => {
+            const elStart = dragStartMap.get(el.id);
+            if (elStart) {
+              return {
+                ...el,
+                x: Math.round(elStart.x + deltaX),
+                y: Math.round(elStart.y + deltaY),
+                updatedAt: Date.now(),
+              };
+            }
+            return el;
+          })
+        );
+      }
+      return;
+    }
+
+    // Hover check for resize handles in select mode
+    if (activeTool === 'select' && selectedId && !isDrawing && !isDraggingElement) {
+      const selectedEl = elements.find(el => el.id === selectedId);
+      if (selectedEl) {
+        const handle = findHandleAt(world, selectedEl);
+        setHoveredHandle(handle ? handle.id : null);
+      }
+    } else {
+      if (hoveredHandle) setHoveredHandle(null);
+    }
+
+    // Drawing
     if (isDrawing) {
       if (activeTool === 'pen' || activeTool === 'highlighter') {
         setCurrentPoints(prev => [...prev, world]);
@@ -800,7 +1315,7 @@ export function BoardCanvas({
     }
   };
 
-  // Pointer Up Handler (Touch, Stylus + Mouse unified)
+  // Pointer Up Handler
   const handlePointerUp = (e: React.PointerEvent) => {
     activePointersRef.current.delete(e.pointerId);
     if (activePointersRef.current.size < 2) {
@@ -828,7 +1343,6 @@ export function BoardCanvas({
       const boxH = maxY - minY;
       setAreaEraseBox(null);
 
-      // If dragged area > 8px, delete all intersecting elements (text, sticky notes, shapes, strokes)
       if (boxW > 8 || boxH > 8) {
         const toDelete = elements.filter(el => isElementInBox(el, minX, minY, maxX, maxY));
         if (toDelete.length > 0) {
@@ -837,9 +1351,10 @@ export function BoardCanvas({
           setElements(next);
           onElementsChange?.(next);
           onHistoryPush?.(next);
+          setSelectedId(null);
+          setSelectedIds(new Set());
         }
       } else {
-        // Single click erase
         const world = screenToWorld(e.clientX, e.clientY);
         const hit = findElementAt(world);
         if (hit) {
@@ -847,13 +1362,24 @@ export function BoardCanvas({
           setElements(next);
           onElementsChange?.(next);
           onHistoryPush?.(next);
+          setSelectedId(null);
+          setSelectedIds(new Set());
         }
       }
       return;
     }
 
+    if (resizingHandle) {
+      setResizingHandle(null);
+      setResizeOrigin(null);
+      onElementsChange?.(elements);
+      onHistoryPush?.(elements);
+      return;
+    }
+
     if (isDraggingElement) {
       setIsDraggingElement(false);
+      setDragStartMap(new Map());
       onElementsChange?.(elements);
       onHistoryPush?.(elements);
       return;
@@ -921,6 +1447,8 @@ export function BoardCanvas({
         return next;
       });
       setSelectedId(newShape.id);
+      setSelectedIds(new Set([newShape.id]));
+      setActiveTool?.('select');
     } else if (activeTool === 'arrow') {
       const endPoint = currentPoints[currentPoints.length - 1] || drawStart;
       const width = endPoint.x - drawStart.x;
@@ -947,53 +1475,60 @@ export function BoardCanvas({
         return next;
       });
       setSelectedId(newArrow.id);
+      setSelectedIds(new Set([newArrow.id]));
+      setActiveTool?.('select');
     }
 
     setCurrentPoints([]);
   };
 
-  // Double click to edit sticky note or shape text
+  // Double click to edit text, sticky notes, or shapes
   const handleDoubleClick = (e: React.MouseEvent) => {
     const world = screenToWorld(e.clientX, e.clientY);
     const hit = findElementAt(world);
-    if (hit && (hit.type === 'sticky' || hit.type === 'shape' || hit.type === 'text')) {
-      setEditingId(hit.id);
-      setEditingText(hit.content || '');
+    if (hit && (hit.type === 'text' || hit.type === 'sticky' || hit.type === 'shape')) {
+      startEditing(hit);
     }
   };
 
-  // Save inline text editing
-  const saveEditing = () => {
-    if (!editingId) return;
-    setElements(prev => {
-      const next = prev.map(el => {
-        if (el.id === editingId) {
-          return {
-            ...el,
-            content: editingText,
-            updatedAt: Date.now(),
-          };
-        }
-        return el;
-      });
-      onElementsChange?.(next);
-      onHistoryPush?.(next);
-      return next;
-    });
-    setEditingId(null);
-    setEditingText('');
-  };
-
-  // Position of in-place editing textarea
+  // Position and bounds of in-place editing textarea in screen space
   const editingElement = elements.find(el => el.id === editingId);
   const editingScreenPos = editingElement
     ? {
         left: editingElement.x * zoom + pan.x,
         top: editingElement.y * zoom + pan.y,
-        width: Math.max(120, editingElement.width * zoom),
-        height: Math.max(60, editingElement.height * zoom),
+        width: Math.max(180, (editingElement.width || 180) * zoom),
+        height: Math.max(56, (editingElement.height || 48) * zoom),
       }
     : null;
+
+  // Selected element for contextual action pill
+  const selectedElement = elements.find(el => el.id === selectedId);
+
+  // Dynamic cursor style calculation
+  const getCanvasCursor = () => {
+    if (isPanning || isSpacePressed || activeTool === 'hand') {
+      return isPanning ? 'cursor-grabbing' : 'cursor-grab';
+    }
+    if (resizingHandle) {
+      if (resizingHandle === 'nw' || resizingHandle === 'se') return 'cursor-nwse-resize';
+      if (resizingHandle === 'ne' || resizingHandle === 'sw') return 'cursor-nesw-resize';
+      if (resizingHandle === 'n' || resizingHandle === 's') return 'cursor-ns-resize';
+      return 'cursor-ew-resize';
+    }
+    if (hoveredHandle) {
+      if (hoveredHandle === 'nw' || hoveredHandle === 'se') return 'cursor-nwse-resize';
+      if (hoveredHandle === 'ne' || hoveredHandle === 'sw') return 'cursor-nesw-resize';
+      if (hoveredHandle === 'n' || hoveredHandle === 's') return 'cursor-ns-resize';
+      return 'cursor-ew-resize';
+    }
+    if (activeTool === 'select') {
+      return isDraggingElement ? 'cursor-move' : 'cursor-default';
+    }
+    if (activeTool === 'text') return 'cursor-text';
+    if (activeTool === 'eraser') return 'cursor-crosshair';
+    return 'cursor-crosshair';
+  };
 
   return (
     <div
@@ -1005,15 +1540,7 @@ export function BoardCanvas({
       onPointerCancel={handlePointerUp}
       onDoubleClick={handleDoubleClick}
       style={{ touchAction: 'none' }}
-      className={`relative w-full h-full overflow-hidden select-none bg-[#09090f] ${
-        activeTool === 'hand' || isSpacePressed
-          ? isPanning ? 'cursor-grabbing' : 'cursor-grab'
-          : activeTool === 'select'
-          ? isDraggingElement ? 'cursor-move' : 'cursor-default'
-          : activeTool === 'pen' || activeTool === 'highlighter'
-          ? 'cursor-crosshair'
-          : 'cursor-crosshair'
-      }`}
+      className={`relative w-full h-full overflow-hidden select-none bg-[#09090f] ${getCanvasCursor()}`}
     >
       <canvas ref={canvasRef} className="block w-full h-full" style={{ touchAction: 'none' }} />
 
@@ -1029,30 +1556,132 @@ export function BoardCanvas({
         </div>
       )}
 
-      {/* Floating Selected Element Action Pill (Great for Mobile & Quick Delete) */}
+      {/* Floating Contextual Element Action Pill */}
       {selectedId && !isDraggingElement && !editingId && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto animate-in fade-in slide-in-from-top-2 duration-150">
-          <div className="px-3.5 py-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-semibold backdrop-blur-md flex items-center gap-2.5 shadow-lg">
-            <span>1 element selected</span>
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="px-3 py-1.5 rounded-2xl bg-[#10101c]/95 border border-cyan-500/30 text-cyan-300 text-xs font-semibold backdrop-blur-xl flex items-center gap-2 shadow-2xl">
+            <span className="px-2 py-0.5 rounded-lg bg-cyan-500/10 text-cyan-300 font-mono text-[11px]">
+              {selectedIds.size > 1
+                ? `${selectedIds.size} items`
+                : selectedElement?.type === 'text'
+                ? 'Text Block'
+                : selectedElement?.type === 'sticky'
+                ? 'Sticky Note'
+                : selectedElement?.type === 'shape'
+                ? 'Shape'
+                : 'Selected'}
+            </span>
+
+            {/* Edit Text Button (Available for text, sticky, shape) */}
+            {selectedElement &&
+              (selectedElement.type === 'text' ||
+                selectedElement.type === 'sticky' ||
+                selectedElement.type === 'shape') && (
+                <button
+                  type="button"
+                  onClick={() => startEditing(selectedElement)}
+                  className="px-2.5 py-1 rounded-xl bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <span>✏️ Edit</span>
+                  <span className="text-[10px] text-cyan-400/80 font-normal hidden sm:inline">(Enter)</span>
+                </button>
+              )}
+
+            {/* Font Size Adjusters for text & sticky */}
+            {selectedElement && (selectedElement.type === 'text' || selectedElement.type === 'sticky') && (
+              <div className="flex items-center gap-1 px-1 border-l border-white/10">
+                <button
+                  type="button"
+                  title="Smaller text"
+                  onClick={() => {
+                    const currentSize = selectedElement.fontSize || 16;
+                    const nextSize = Math.max(10, currentSize - 2);
+                    setElements(prev =>
+                      prev.map(el => (el.id === selectedId ? { ...el, fontSize: nextSize } : el))
+                    );
+                    onElementsChange?.(elements);
+                  }}
+                  className="w-6 h-6 rounded-lg bg-white/5 hover:bg-white/15 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-xs"
+                >
+                  A-
+                </button>
+                <span className="text-[10px] font-mono text-zinc-400 w-5 text-center">
+                  {selectedElement.fontSize || 16}
+                </span>
+                <button
+                  type="button"
+                  title="Larger text"
+                  onClick={() => {
+                    const currentSize = selectedElement.fontSize || 16;
+                    const nextSize = Math.min(48, currentSize + 2);
+                    setElements(prev =>
+                      prev.map(el => (el.id === selectedId ? { ...el, fontSize: nextSize } : el))
+                    );
+                    onElementsChange?.(elements);
+                  }}
+                  className="w-6 h-6 rounded-lg bg-white/5 hover:bg-white/15 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-xs"
+                >
+                  A+
+                </button>
+              </div>
+            )}
+
+            {/* Duplicate button */}
             <button
               type="button"
               onClick={() => {
-                const next = elements.filter(el => el.id !== selectedId);
-                setElements(next);
-                onElementsChange?.(next);
-                onHistoryPush?.(next);
-                setSelectedId(null);
+                if (selectedElement) {
+                  const dup: BoardElement = {
+                    ...selectedElement,
+                    id: `${selectedElement.type}_${Date.now()}`,
+                    x: selectedElement.x + 28,
+                    y: selectedElement.y + 28,
+                    zIndex: elements.length + 1,
+                    updatedAt: Date.now(),
+                  };
+                  setElements(prev => {
+                    const next = [...prev, dup];
+                    onElementsChange?.(next);
+                    onHistoryPush?.(next);
+                    return next;
+                  });
+                  setSelectedId(dup.id);
+                  setSelectedIds(new Set([dup.id]));
+                }
               }}
-              className="px-2.5 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold transition-colors cursor-pointer"
+              className="px-2 py-1 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs transition-colors flex items-center gap-1 cursor-pointer"
             >
-              🗑️ Delete (Del)
+              <span>📋 Duplicate</span>
             </button>
+
+            {/* Delete button */}
             <button
               type="button"
-              onClick={() => setSelectedId(null)}
-              className="text-zinc-400 hover:text-white text-xs cursor-pointer"
+              onClick={() => {
+                setElements(prev => {
+                  const next = prev.filter(el => !selectedIds.has(el.id));
+                  onElementsChange?.(next);
+                  onHistoryPush?.(next);
+                  return next;
+                });
+                setSelectedId(null);
+                setSelectedIds(new Set());
+              }}
+              className="px-2.5 py-1 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold transition-colors cursor-pointer"
             >
-              ✕ Deselect
+              🗑️ Delete
+            </button>
+
+            {/* Deselect */}
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedId(null);
+                setSelectedIds(new Set());
+              }}
+              className="text-zinc-400 hover:text-white text-xs px-1 cursor-pointer"
+            >
+              ✕
             </button>
           </div>
         </div>
@@ -1068,21 +1697,21 @@ export function BoardCanvas({
             <div>
               <h3 className="text-base sm:text-lg font-bold text-white font-brand">Collaborative Canvas Ready</h3>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                Pick a pen, shape, or sticky note from the toolbar below to sketch. All strokes sync anonymously with peers.
+                Pick a text box, sticky note, shape, or pen from the toolbar below. Double click any text to edit inline.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-left">
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 space-y-1">
-                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">1. Draw &amp; Sketch</span>
-                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Pen, highlighter, shapes, arrows &amp; notes</p>
+                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">1. Click Text (T)</span>
+                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Click anywhere to type text without overlapping</p>
               </div>
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 space-y-1">
-                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">2. Share Room</span>
-                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Share room code, link, or scan QR code</p>
+                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">2. Double Click</span>
+                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Double click or press Enter to edit any note</p>
               </div>
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 space-y-1">
-                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">3. Instant Export</span>
-                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Export anytime as PNG, vector SVG, or JSON</p>
+                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">3. Resize &amp; Drag</span>
+                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Drag handles to resize or reposition</p>
               </div>
             </div>
           </div>
@@ -1097,19 +1726,59 @@ export function BoardCanvas({
             left: `${editingScreenPos.left}px`,
             top: `${editingScreenPos.top}px`,
             width: `${editingScreenPos.width}px`,
-            height: `${editingScreenPos.height}px`,
+            minHeight: `${editingScreenPos.height}px`,
           }}
-          className="z-50"
+          className="z-50 flex flex-col pointer-events-auto"
         >
+          {/* Header Action Strip */}
+          <div className="flex items-center justify-between pb-1 px-1 text-[11px] font-medium text-cyan-300 select-none">
+            <span className="bg-[#10101c]/90 px-2 py-0.5 rounded-md border border-cyan-500/30 text-[10px] shadow">
+              ✏️ Editing • Enter to save • Esc to cancel
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onMouseDown={e => {
+                  e.preventDefault();
+                  saveEditing();
+                }}
+                className="px-2 py-0.5 rounded-md bg-cyan-500 text-black font-bold text-[10px] hover:bg-cyan-400 cursor-pointer shadow"
+              >
+                ✓ Done
+              </button>
+              <button
+                type="button"
+                onMouseDown={e => {
+                  e.preventDefault();
+                  cancelEditing();
+                }}
+                className="px-1.5 py-0.5 rounded-md bg-white/10 text-zinc-300 hover:text-white text-[10px] cursor-pointer"
+              >
+                ✕ Cancel
+              </button>
+            </div>
+          </div>
+
           <textarea
+            ref={textareaRef}
             autoFocus
             value={editingText}
-            onChange={e => setEditingText(e.target.value)}
-            onBlur={saveEditing}
-            onKeyDown={e => {
-              if (e.key === 'Escape') saveEditing();
+            placeholder="Type your text here..."
+            onChange={e => {
+              setEditingText(e.target.value);
+              // Auto-grow height with content
+              if (textareaRef.current) {
+                textareaRef.current.style.height = 'auto';
+                textareaRef.current.style.height = `${Math.max(50, textareaRef.current.scrollHeight)}px`;
+              }
             }}
-            className="w-full h-full p-2.5 rounded-lg border-2 border-cyan-400 bg-[#09090f]/95 text-white font-sans text-xs resize-none focus:outline-none focus:ring-2 focus:ring-cyan-500/30 shadow-2xl"
+            onBlur={saveEditing}
+            className="w-full flex-1 p-2 rounded-xl border-2 border-cyan-400 bg-[#09090f]/95 text-white font-sans text-sm resize-none focus:outline-none focus:ring-4 focus:ring-cyan-500/30 shadow-2xl leading-relaxed"
+            style={{
+              fontSize: `${Math.max(12, (editingElement.fontSize || 16) * zoom)}px`,
+              color: editingElement.color || '#00f0ff',
+              minHeight: `${editingScreenPos.height}px`,
+            }}
           />
         </div>
       )}
