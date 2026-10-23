@@ -291,12 +291,12 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('text')}
-              title="Add Text Block (T)"
+              title="Text (T) — Click canvas to write"
               aria-label="Text tool"
               aria-pressed={activeTool === 'text'}
               className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${
                 activeTool === 'text'
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20 ring-1 ring-cyan-400'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
               }`}
             >

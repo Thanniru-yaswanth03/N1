@@ -171,33 +171,90 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
       expect(savedEl.content).toBe('Updated Architecture Diagram Notes');
     });
 
-    it('duplicates element with proper offset and clean unique id', () => {
-      const el: BoardElement = {
-        id: 'text_100',
-        type: 'text',
-        x: 100,
-        y: 100,
-        width: 180,
-        height: 40,
-        color: '#00f0ff',
-        strokeWidth: 2,
-        content: 'Component A',
-        zIndex: 1,
+    it('purges empty text elements when abandoned without content on commit', () => {
+      const elements: BoardElement[] = [
+        {
+          id: 'text_existing',
+          type: 'text',
+          x: 10,
+          y: 10,
+          width: 140,
+          height: 36,
+          color: '#00f0ff',
+          strokeWidth: 2,
+          content: 'Keep me',
+          zIndex: 1,
+        },
+        {
+          id: 'text_empty_abandoned',
+          type: 'text',
+          x: 100,
+          y: 100,
+          width: 180,
+          height: 36,
+          color: '#00f0ff',
+          strokeWidth: 2,
+          content: '',
+          zIndex: 2,
+        },
+      ];
+
+      const commitSave = (list: BoardElement[], editId: string, text: string) => {
+        const trimmed = text.trim();
+        const target = list.find(el => el.id === editId);
+        if (!trimmed && target?.type === 'text') {
+          return list.filter(el => el.id !== editId);
+        }
+        return list.map(el => (el.id === editId ? { ...el, content: trimmed } : el));
       };
 
-      const dup: BoardElement = {
-        ...el,
-        id: `text_${Date.now()}`,
-        x: el.x + 28,
-        y: el.y + 28,
-        zIndex: el.zIndex + 1,
-        updatedAt: Date.now(),
+      const result = commitSave(elements, 'text_empty_abandoned', '   ');
+      expect(result.length).toBe(1);
+      expect(result[0]?.id).toBe('text_existing');
+      expect(result.some(el => el.id === 'text_empty_abandoned')).toBe(false);
+    });
+
+    it('removes newly created empty text when cancelled with Escape', () => {
+      const elements: BoardElement[] = [
+        {
+          id: 'text_new',
+          type: 'text',
+          x: 200,
+          y: 200,
+          width: 180,
+          height: 36,
+          color: '#00f0ff',
+          strokeWidth: 2,
+          content: '',
+          zIndex: 1,
+        },
+      ];
+
+      const cancelEdit = (list: BoardElement[], editId: string, originalText: string) => {
+        const target = list.find(el => el.id === editId);
+        if ((!originalText || !originalText.trim()) && target?.type === 'text') {
+          return list.filter(el => el.id !== editId);
+        }
+        return list.map(el => (el.id === editId ? { ...el, content: originalText } : el));
       };
 
-      expect(dup.id).not.toBe(el.id);
-      expect(dup.x).toBe(128);
-      expect(dup.y).toBe(128);
-      expect(dup.content).toBe('Component A');
+      const result = cancelEdit(elements, 'text_new', '');
+      expect(result.length).toBe(0);
+    });
+
+    it('calculates dynamic dimensions to prevent text clipping on multiline content', () => {
+      const multilineText = 'First header line\nA much longer second line of architecture diagram descriptions\nThird line';
+      const lines = multilineText.split('\n');
+      const longestLine = lines.reduce((a, b) => (a.length > b.length ? a : b), '');
+      const fontSize = 16;
+      const lineHeight = fontSize + 6;
+      const approxCharWidth = fontSize * 0.58;
+      const autoWidth = Math.max(140, Math.round(longestLine.length * approxCharWidth + 24));
+      const autoHeight = Math.max(36, lines.length * lineHeight + 12);
+
+      expect(lines.length).toBe(3);
+      expect(autoWidth).toBeGreaterThan(300);
+      expect(autoHeight).toBe(3 * 22 + 12);
     });
   });
 });

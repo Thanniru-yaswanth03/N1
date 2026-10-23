@@ -267,10 +267,20 @@ export function BoardCanvas({
       setEditingText(textToUse);
       setEditingOriginalText(el.content || '');
       setActiveTool?.('select');
-      setTimeout(() => {
-        textareaRef.current?.focus();
-        textareaRef.current?.select();
-      }, 30);
+
+      const focusEditor = () => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          if (initialText !== undefined && initialText === '') {
+            textareaRef.current.setSelectionRange(0, 0);
+          } else {
+            const len = textareaRef.current.value.length;
+            textareaRef.current.setSelectionRange(len, len);
+          }
+        }
+      };
+      requestAnimationFrame(focusEditor);
+      setTimeout(focusEditor, 25);
     },
     [setActiveTool]
   );
@@ -278,20 +288,44 @@ export function BoardCanvas({
   // Save inline text editing
   const saveEditing = useCallback(() => {
     if (!editingId) return;
+    const currentEditingId = editingId;
+    const currentText = editingText;
 
     setElements(prev => {
+      const trimmed = currentText.trim();
+      const targetEl = prev.find(el => el.id === currentEditingId);
+
+      // If text element was abandoned with empty content, remove it cleanly from canvas
+      if (!trimmed && targetEl?.type === 'text') {
+        const next = prev.filter(el => el.id !== currentEditingId);
+        onElementsChange?.(next);
+        onHistoryPush?.(next);
+        return next;
+      }
+
       const next = prev.map(el => {
-        if (el.id === editingId) {
-          const trimmed = editingText.trim();
-          // If empty, keep placeholder content or leave blank with min dimensions
+        if (el.id === currentEditingId) {
+          // Dynamic auto-sizing based on lines and character count
+          const lines = currentText.split('\n');
+          const longestLine = lines.reduce((a, b) => (a.length > b.length ? a : b), '');
+          const fontSize = el.fontSize || 16;
+          const lineHeight = fontSize + 6;
+          const approxCharWidth = fontSize * 0.58;
+          const contentWidth = Math.round(longestLine.length * approxCharWidth + 24);
+          const finalWidth = Math.max(el.width || 140, contentWidth);
+          const finalHeight = Math.max(36, lines.length * lineHeight + 12);
+
           return {
             ...el,
-            content: trimmed,
+            content: currentText,
+            width: finalWidth,
+            height: finalHeight,
             updatedAt: Date.now(),
           };
         }
         return el;
       });
+
       onElementsChange?.(next);
       onHistoryPush?.(next);
       return next;
@@ -305,24 +339,36 @@ export function BoardCanvas({
   // Cancel inline text editing without saving
   const cancelEditing = useCallback(() => {
     if (!editingId) return;
+    const currentEditingId = editingId;
+    const originalText = editingOriginalText;
 
-    setElements(prev =>
-      prev.map(el => {
-        if (el.id === editingId) {
+    setElements(prev => {
+      const targetEl = prev.find(el => el.id === currentEditingId);
+
+      // If it was a newly created text element with no original text, remove it on cancel
+      if ((!originalText || !originalText.trim()) && targetEl?.type === 'text') {
+        const next = prev.filter(el => el.id !== currentEditingId);
+        onElementsChange?.(next);
+        onHistoryPush?.(next);
+        return next;
+      }
+
+      return prev.map(el => {
+        if (el.id === currentEditingId) {
           return {
             ...el,
-            content: editingOriginalText,
+            content: originalText,
             updatedAt: Date.now(),
           };
         }
         return el;
-      })
-    );
+      });
+    });
 
     setEditingId(null);
     setEditingText('');
     setEditingOriginalText('');
-  }, [editingId, editingOriginalText, setElements]);
+  }, [editingId, editingOriginalText, onElementsChange, onHistoryPush, setElements]);
 
   // Resize canvas to fill container with devicePixelRatio
   useEffect(() => {
@@ -419,7 +465,8 @@ export function BoardCanvas({
           cancelEditing();
           return;
         }
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || !e.shiftKey)) {
+        // Ctrl/Cmd + Enter commits inline text editing (plain Enter creates new lines in textarea)
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           saveEditing();
           return;
@@ -463,7 +510,8 @@ export function BoardCanvas({
         const selectedEl = elements.find(el => el.id === selectedId);
         if (selectedEl && selectedEl.type === 'text') {
           e.preventDefault();
-          startEditing(selectedEl, e.key);
+          const nextText = selectedEl.content ? `${selectedEl.content}${e.key}` : e.key;
+          startEditing(selectedEl, nextText);
           return;
         }
       }
@@ -783,28 +831,19 @@ export function BoardCanvas({
               lines.forEach((l, idx) => {
                 ctx.fillText(l, 0, fontSize + idx * lineHeight);
               });
-            } else {
-              // Empty text element placeholder (ensures user always sees and can click/edit it)
+            } else if (selectedIds.has(el.id)) {
+              // Empty text element placeholder (only shown when selected to avoid canvas clutter)
               ctx.fillStyle = 'rgba(100, 116, 139, 0.7)';
               ctx.font = `italic ${fontSize}px ${fontFam}`;
               ctx.fillText('Type text here...', 0, fontSize);
-
-              // Subtle dotted guide box when unselected & empty
-              if (el.id !== selectedId) {
-                ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
-                ctx.lineWidth = 1;
-                ctx.setLineDash([3, 3]);
-                ctx.strokeRect(-2, -2, el.width + 4, el.height + 4);
-                ctx.setLineDash([]);
-              }
             }
           }
           break;
         }
       }
 
-      // Selection bounding box & 8 functional resize handles
-      if (selectedIds.has(el.id)) {
+      // Selection bounding box & 8 functional resize handles (suppressed when actively editing)
+      if (selectedIds.has(el.id) && el.id !== editingId) {
         const isSingleSelected = selectedIds.size === 1;
         ctx.strokeStyle = '#00f0ff';
         ctx.lineWidth = 1.5 / zoom;
@@ -1497,8 +1536,8 @@ export function BoardCanvas({
     ? {
         left: editingElement.x * zoom + pan.x,
         top: editingElement.y * zoom + pan.y,
-        width: Math.max(180, (editingElement.width || 180) * zoom),
-        height: Math.max(56, (editingElement.height || 48) * zoom),
+        width: Math.max(160, (editingElement.width || 160) * zoom),
+        minHeight: Math.max(32, (editingElement.height || 32) * zoom),
       }
     : null;
 
@@ -1571,21 +1610,6 @@ export function BoardCanvas({
                 ? 'Shape'
                 : 'Selected'}
             </span>
-
-            {/* Edit Text Button (Available for text, sticky, shape) */}
-            {selectedElement &&
-              (selectedElement.type === 'text' ||
-                selectedElement.type === 'sticky' ||
-                selectedElement.type === 'shape') && (
-                <button
-                  type="button"
-                  onClick={() => startEditing(selectedElement)}
-                  className="px-2.5 py-1 rounded-xl bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                >
-                  <span>✏️ Edit</span>
-                  <span className="text-[10px] text-cyan-400/80 font-normal hidden sm:inline">(Enter)</span>
-                </button>
-              )}
 
             {/* Font Size Adjusters for text & sticky */}
             {selectedElement && (selectedElement.type === 'text' || selectedElement.type === 'sticky') && (
@@ -1697,17 +1721,17 @@ export function BoardCanvas({
             <div>
               <h3 className="text-base sm:text-lg font-bold text-white font-brand">Collaborative Canvas Ready</h3>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                Pick a text box, sticky note, shape, or pen from the toolbar below. Double click any text to edit inline.
+                Pick a text box, sticky note, shape, or pen from the toolbar below. Click anywhere or double click any text to type.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-left">
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 space-y-1">
-                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">1. Click Text (T)</span>
-                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Click anywhere to type text without overlapping</p>
+                <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">1. Text (T)</span>
+                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Click canvas &amp; start typing immediately</p>
               </div>
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 space-y-1">
                 <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">2. Double Click</span>
-                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Double click or press Enter to edit any note</p>
+                <p className="text-[11px] text-[var(--color-text-muted)] leading-tight">Double-click any text to edit directly</p>
               </div>
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/5 space-y-1">
                 <span className="text-[10px] font-mono text-cyan-300 font-bold uppercase block">3. Resize &amp; Drag</span>
@@ -1718,7 +1742,7 @@ export function BoardCanvas({
         </div>
       )}
 
-      {/* In-place Text/Sticky Note Editing Overlay */}
+      {/* Seamless In-place Text/Sticky Note Editing Overlay */}
       {editingElement && editingScreenPos && (
         <div
           style={{
@@ -1726,58 +1750,78 @@ export function BoardCanvas({
             left: `${editingScreenPos.left}px`,
             top: `${editingScreenPos.top}px`,
             width: `${editingScreenPos.width}px`,
-            minHeight: `${editingScreenPos.height}px`,
+            minHeight: `${editingScreenPos.minHeight}px`,
           }}
-          className="z-50 flex flex-col pointer-events-auto"
+          className="z-50 pointer-events-auto"
+          onClick={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
         >
-          {/* Header Action Strip */}
-          <div className="flex items-center justify-between pb-1 px-1 text-[11px] font-medium text-cyan-300 select-none">
-            <span className="bg-[#10101c]/90 px-2 py-0.5 rounded-md border border-cyan-500/30 text-[10px] shadow">
-              ✏️ Editing • Enter to save • Esc to cancel
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  saveEditing();
-                }}
-                className="px-2 py-0.5 rounded-md bg-cyan-500 text-black font-bold text-[10px] hover:bg-cyan-400 cursor-pointer shadow"
-              >
-                ✓ Done
-              </button>
-              <button
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  cancelEditing();
-                }}
-                className="px-1.5 py-0.5 rounded-md bg-white/10 text-zinc-300 hover:text-white text-[10px] cursor-pointer"
-              >
-                ✕ Cancel
-              </button>
-            </div>
-          </div>
-
           <textarea
             ref={textareaRef}
             autoFocus
             value={editingText}
-            placeholder="Type your text here..."
+            placeholder={editingElement.type === 'sticky' ? 'Type note...' : 'Type text...'}
             onChange={e => {
               setEditingText(e.target.value);
-              // Auto-grow height with content
               if (textareaRef.current) {
                 textareaRef.current.style.height = 'auto';
-                textareaRef.current.style.height = `${Math.max(50, textareaRef.current.scrollHeight)}px`;
+                textareaRef.current.style.height = `${Math.max(
+                  editingScreenPos.minHeight,
+                  textareaRef.current.scrollHeight
+                )}px`;
               }
             }}
+            onKeyDown={e => {
+              // Crucial: stop propagation so canvas shortcuts never trigger
+              e.stopPropagation();
+
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelEditing();
+                return;
+              }
+
+              // Ctrl/Cmd + Enter commits inline text editing
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                saveEditing();
+                return;
+              }
+
+              // Tab inserts 2 spaces without losing focus
+              if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = e.currentTarget.selectionStart;
+                const end = e.currentTarget.selectionEnd;
+                const val = e.currentTarget.value;
+                setEditingText(val.substring(0, start) + '  ' + val.substring(end));
+                setTimeout(() => {
+                  if (textareaRef.current) {
+                    textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + 2;
+                  }
+                }, 0);
+                return;
+              }
+
+              // Plain Enter inserts newline naturally for multiline text
+            }}
+            onKeyUp={e => e.stopPropagation()}
             onBlur={saveEditing}
-            className="w-full flex-1 p-2 rounded-xl border-2 border-cyan-400 bg-[#09090f]/95 text-white font-sans text-sm resize-none focus:outline-none focus:ring-4 focus:ring-cyan-500/30 shadow-2xl leading-relaxed"
+            className={`w-full resize-none outline-none focus:outline-none transition-none ${
+              editingElement.type === 'sticky'
+                ? 'p-2.5 rounded-xl bg-amber-500/15 border border-dashed border-amber-400/80 text-amber-100 shadow-xl'
+                : 'p-0.5 rounded bg-black/30 border border-dashed border-cyan-400/80 text-cyan-200'
+            }`}
             style={{
               fontSize: `${Math.max(12, (editingElement.fontSize || 16) * zoom)}px`,
-              color: editingElement.color || '#00f0ff',
-              minHeight: `${editingScreenPos.height}px`,
+              lineHeight: `${Math.max(16, ((editingElement.fontSize || 16) + 6) * zoom)}px`,
+              fontFamily:
+                editingElement.fontFamily === 'mono' ? 'monospace' : 'sans-serif',
+              color: editingElement.color || (editingElement.type === 'sticky' ? '#ffffff' : '#00f0ff'),
+              caretColor: editingElement.color || '#00f0ff',
+              minHeight: `${editingScreenPos.minHeight}px`,
+              boxSizing: 'border-box',
             }}
           />
         </div>
