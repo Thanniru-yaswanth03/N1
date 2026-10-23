@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTheme, Theme } from '../theme-provider';
@@ -11,14 +11,32 @@ import { BrandLogo } from '../brand/BrandLogo';
 
 export function Navbar() {
   const pathname = usePathname();
-  if (pathname?.startsWith('/admin')) {
-    return null;
-  }
 
   const { theme, resolvedTheme, setTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
   const [recentDropsOpen, setRecentDropsOpen] = useState(false);
+
+  // Close all drawers on route navigation
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setThemeDropdownOpen(false);
+    setRecentDropsOpen(false);
+  }, [pathname]);
+
+  // Lock body scroll when mobile navigation menu is open
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [mobileMenuOpen]);
+
+  if (pathname?.startsWith('/admin')) {
+    return null;
+  }
 
   // Dedicated fullscreen collaborative workspaces (e.g. Study Board canvas) have their own header
   if (pathname?.startsWith('/board/') && pathname !== '/board') {

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import {
   RecentDropItem,
@@ -16,10 +17,15 @@ interface RecentDropsDrawerProps {
 }
 
 export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
+  const [mounted, setMounted] = useState(false);
   const [drops, setDrops] = useState<RecentDropItem[]>([]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [deletingCode, setDeletingCode] = useState<string | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const loadDrops = () => {
     setDrops(getRecentDrops());
@@ -41,14 +47,24 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
     };
   }, []);
 
+  // Handle escape key and body scroll lock
   useEffect(() => {
+    if (!isOpen) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === 'Escape') {
         onClose();
       }
     };
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [isOpen, onClose]);
 
   const handleCopy = (code: string) => {
@@ -67,10 +83,13 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
 
     setDeletingCode(item.code);
     try {
-      await fetch(`/api/drop/${item.code}`, {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+      await fetch(`${apiBase}/api/drop/${item.code}`, {
         method: 'DELETE',
         headers: {
-          'X-Owner-Token': item.ownerDeletionToken,
+          'Content-Type': 'application/json',
+          'x-deletion-token': item.ownerDeletionToken,
+          'x-owner-token': item.ownerDeletionToken,
         },
       });
     } catch {
@@ -86,19 +105,24 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
     setConfirmClearAll(false);
   };
 
-  if (!isOpen) return null;
+  if (!mounted || !isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-hidden flex justify-end animate-fadeIn">
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="My Recent Drops"
+      className="fixed inset-0 z-[100] overflow-hidden flex justify-end pointer-events-auto animate-fadeIn"
+    >
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity cursor-pointer pointer-events-auto"
         onClick={onClose}
         aria-hidden="true"
       />
 
       {/* Drawer Panel */}
-      <div className="relative w-full max-w-md bg-n1-surface border-l border-n1-border shadow-2xl flex flex-col h-full z-10 animate-slideInRight">
+      <div className="relative w-full max-w-md bg-n1-surface border-l border-n1-border shadow-2xl flex flex-col h-full z-10 pointer-events-auto animate-slideInRight">
         {/* Header */}
         <div className="p-5 border-b border-n1-border flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -112,8 +136,9 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-n1-text-muted hover:text-n1-text-primary hover:bg-n1-surface-raised transition-colors"
+            className="p-1.5 rounded-lg text-n1-text-muted hover:text-n1-text-primary hover:bg-n1-surface-raised transition-colors cursor-pointer"
             aria-label="Close drawer"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -194,7 +219,7 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
                       size="sm"
                       variant="secondary"
                       onClick={() => handleCopy(item.code)}
-                      className="flex-1 text-xs py-1.5 h-auto"
+                      className="flex-1 text-xs py-1.5 h-auto cursor-pointer"
                     >
                       {copiedCode === item.code ? 'Copied!' : 'Copy Link'}
                     </Button>
@@ -205,7 +230,7 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
                         variant="ghost"
                         onClick={() => handleBurn(item)}
                         disabled={deletingCode === item.code}
-                        className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 text-xs py-1.5 h-auto"
+                        className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 text-xs py-1.5 h-auto cursor-pointer"
                         title="Permanently burn Drop from server now"
                       >
                         {deletingCode === item.code ? 'Burning...' : 'Burn Now'}
@@ -215,7 +240,7 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
                         size="sm"
                         variant="ghost"
                         onClick={() => removeRecentDrop(item.code)}
-                        className="text-n1-text-muted hover:text-rose-400 text-xs py-1.5 h-auto"
+                        className="text-n1-text-muted hover:text-rose-400 text-xs py-1.5 h-auto cursor-pointer"
                         title="Remove from history"
                       >
                         Remove
@@ -241,7 +266,7 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
                     size="sm"
                     variant="ghost"
                     onClick={() => setConfirmClearAll(false)}
-                    className="flex-1 text-xs"
+                    className="flex-1 text-xs cursor-pointer"
                   >
                     Cancel
                   </Button>
@@ -249,7 +274,7 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
                     size="sm"
                     variant="danger"
                     onClick={handleClearAll}
-                    className="flex-1 text-xs"
+                    className="flex-1 text-xs cursor-pointer"
                   >
                     Yes, Clear All
                   </Button>
@@ -260,7 +285,7 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
                 size="sm"
                 variant="ghost"
                 onClick={() => setConfirmClearAll(true)}
-                className="w-full text-xs text-n1-text-muted hover:text-rose-400"
+                className="w-full text-xs text-n1-text-muted hover:text-rose-400 cursor-pointer"
               >
                 Clear All Recent Drops
               </Button>
@@ -268,6 +293,7 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

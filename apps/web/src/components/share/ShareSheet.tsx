@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
 import { Button } from '../ui/Button';
 
@@ -25,6 +26,7 @@ export function ShareSheet({
   onClose,
   isInline = false,
 }: ShareSheetProps) {
+  const [mounted, setMounted] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [showQr, setShowQr] = useState(false);
@@ -32,10 +34,33 @@ export function ShareSheet({
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     if (typeof navigator !== 'undefined' && !!navigator.share) {
       setSupportsNativeShare(true);
     }
   }, []);
+
+  // Lock body scroll and handle Escape key when open as modal
+  useEffect(() => {
+    if (isInline || !isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && onClose) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isInline, isOpen, onClose]);
 
   // Generate QR code when canvas is visible
   useEffect(() => {
@@ -258,22 +283,23 @@ export function ShareSheet({
     );
   }
 
-  if (!isOpen) return null;
+  if (!mounted || !isOpen) return null;
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150 pointer-events-auto"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Share Sheet"
     >
       <div
-        className="w-full max-w-md rounded-2xl bg-n1-surface-raised border border-n1-border shadow-2xl p-6 animate-in zoom-in-95 duration-150"
+        className="w-full max-w-md rounded-2xl bg-n1-surface-raised border border-n1-border shadow-2xl p-6 animate-in zoom-in-95 duration-150 pointer-events-auto"
         onClick={e => e.stopPropagation()}
       >
         {content}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

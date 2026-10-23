@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
 import { Button } from '../ui/Button';
 
@@ -12,11 +13,16 @@ interface ShareModalProps {
 }
 
 export function ShareModal({ isOpen, onClose, roomCode, roomTitle }: ShareModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [showQr, setShowQr] = useState(true);
   const [supportsNativeShare, setSupportsNativeShare] = useState(false);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const shareUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/board/${roomCode}`
@@ -61,7 +67,7 @@ export function ShareModal({ isOpen, onClose, roomCode, roomTitle }: ShareModalP
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!mounted || !isOpen) return null;
 
   const handleCopyLink = async () => {
     try {
@@ -118,9 +124,9 @@ export function ShareModal({ isOpen, onClose, roomCode, roomTitle }: ShareModalP
     document.body.removeChild(a);
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-150"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-150 pointer-events-auto"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -263,6 +269,7 @@ export function ShareModal({ isOpen, onClose, roomCode, roomTitle }: ShareModalP
           <span className="font-mono text-zinc-400">Ephemeral Sync</span>
         </div>
      </div>
-    </div>
+    </div>,
+    document.body
   );
 }
