@@ -170,5 +170,22 @@ export const apiClient = {
     }
     return true;
   },
+
+  /**
+   * Retrieves safe public metadata for a Drop without consuming views.
+   */
+  async getDropMetadata(code: string): Promise<Record<string, unknown>> {
+    const res = await fetch(`${API_BASE_URL}/api/drop/${code}/meta`, {
+      headers: { Accept: 'application/json' },
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.success) {
+      throw new ApiError(
+        json?.error?.message || 'Failed to fetch drop metadata',
+        json?.error?.code || 'FETCH_ERROR'
+      );
+    }
+    return json.data;
+  },
 };
 

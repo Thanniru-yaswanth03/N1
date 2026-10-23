@@ -562,4 +562,114 @@ describe('N1 Drop Retrieval and Downloads (Phase 6)', () => {
       expect(getResAfter.body.error.code).toBe('DROP_BURNED');
     });
   });
+
+  describe('9. Regression Suite: Safe Metadata, Owner Token Bypass & Single-View Downloads', () => {
+    it('GET /api/drop/:code/meta returns metadata without incrementing viewCount', async () => {
+      const createRes = await request(app)
+        .post('/api/drop')
+        .field('drop_type', 'files')
+        .field('expiry', '1h')
+        .field('max_views', '1')
+        .attach('files', sampleTxtBuffer, 'safe_meta.txt');
+
+      const { code } = createRes.body;
+      createdDropCodes.push(code);
+
+      // Call meta endpoint 3 times
+      const meta1 = await request(app).get(`/api/drop/${code}/meta`);
+      expect(meta1.status).toBe(200);
+      expect(meta1.body.success).toBe(true);
+      expect(meta1.body.data.code).toBe(code);
+      expect(meta1.body.data.maxViews).toBe(1);
+      expect(meta1.body.data.isViewLimitReached).toBe(false);
+
+      const meta2 = await request(app).get(`/api/drop/${code}/meta`);
+      expect(meta2.status).toBe(200);
+
+      const meta3 = await request(app).get(`/api/drop/${code}/meta`);
+      expect(meta3.status).toBe(200);
+
+      // Verify the drop's viewCount is still 0
+      const dropDoc = await Drop.findOne({ code });
+      expect(dropDoc!.viewCount).toBe(0);
+    });
+
+    it('allows owner to inspect drop with x-owner-token without incrementing viewCount', async () => {
+      const createRes = await request(app)
+        .post('/api/drop')
+        .field('drop_type', 'files')
+        .field('expiry', '1h')
+        .field('max_views', '1')
+        .attach('files', sampleTxtBuffer, 'owner_test.txt');
+
+      const { code, deletionToken } = createRes.body;
+      createdDropCodes.push(code);
+
+      // Creator inspects drop with x-owner-token
+      const inspectRes = await request(app)
+        .get(`/api/drop/${code}`)
+        .set('x-owner-token', deletionToken);
+
+      expect(inspectRes.status).toBe(200);
+      expect(inspectRes.body.data.code).toBe(code);
+      expect(inspectRes.body.data.viewCount).toBe(0);
+
+      // View count in DB is still 0
+      const dropDoc = await Drop.findOne({ code });
+      expect(dropDoc!.viewCount).toBe(0);
+    });
+
+    it('enables recipient to view 1-view drop, reload without view-limit lockout, and download files', async () => {
+      const createRes = await request(app)
+        .post('/api/drop')
+        .field('drop_type', 'files')
+        .field('expiry', '1h')
+        .field('max_views', '1')
+        .attach('files', samplePngBuffer, 'single_view.png')
+        .attach('files', sampleTxtBuffer, 'notes.txt');
+
+      const { code } = createRes.body;
+      createdDropCodes.push(code);
+
+      // Recipient opens drop (View 1)
+      const viewRes = await request(app).get(`/api/drop/${code}`);
+      expect(viewRes.status).toBe(200);
+      expect(viewRes.body.data.viewCount).toBe(1);
+      expect(viewRes.body.data.viewToken).toBeDefined();
+
+      const viewToken = viewRes.body.data.viewToken;
+      const fileId = viewRes.body.data.files[0].id;
+
+      // Recipient refreshes page or makes duplicate request with viewToken: should succeed with viewCount = 1
+      const reloadRes = await request(app)
+        .get(`/api/drop/${code}`)
+        .set('Authorization', `Bearer ${viewToken}`);
+      expect(reloadRes.status).toBe(200);
+      expect(reloadRes.body.data.viewCount).toBe(1);
+
+      // Recipient downloads file with token query param: succeeds
+      const downloadRes = await request(app)
+        .get(`/api/drop/${code}/download/${fileId}?token=${encodeURIComponent(viewToken)}`);
+      expect(downloadRes.status).toBe(200);
+      expect(downloadRes.headers['content-type']).toBe('image/png');
+
+      // Recipient downloads ZIP with token query param: succeeds
+      const zipRes = await request(app)
+        .get(`/api/drop/${code}/download-zip?token=${encodeURIComponent(viewToken)}`)
+        .responseType('blob');
+      expect(zipRes.status).toBe(200);
+      expect(zipRes.headers['content-type']).toBe('application/zip');
+
+      // A different client / unauthorized request without token gets 410 VIEW_LIMIT_REACHED
+      const unauthorizedRes = await request(app).get(`/api/drop/${code}`);
+      expect(unauthorizedRes.status).toBe(410);
+      expect(unauthorizedRes.body.error.code).toBe('VIEW_LIMIT_REACHED');
+
+      // Unauthorized file download without token gets 410 VIEW_LIMIT_REACHED
+      const unauthDownload = await request(app).get(`/api/drop/${code}/download/${fileId}`);
+      expect(unauthDownload.status).toBe(410);
+      expect(unauthDownload.body.error.code).toBe('VIEW_LIMIT_REACHED');
+    });
+  });
 });
+

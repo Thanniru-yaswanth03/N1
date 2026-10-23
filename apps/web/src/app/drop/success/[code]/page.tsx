@@ -64,8 +64,8 @@ export default function DropSuccessPage() {
         // ignore storage read issues
       }
 
-      // Fallback: fetch metadata from API if not in sessionStorage
-      fetch(`${apiClient.getApiBaseUrl()}/api/drop/${code}`, {
+      // Fallback: fetch metadata from API if not in sessionStorage (never consumes views)
+      fetch(`${apiClient.getApiBaseUrl()}/api/drop/${code}/meta`, {
         headers: { Accept: 'application/json' },
       })
         .then(res => res.json())

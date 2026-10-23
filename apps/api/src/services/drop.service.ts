@@ -96,7 +96,7 @@ export interface PublicFileMeta {
 
 export interface DropDetailsResult {
   code: string;
-  status: 'ACTIVE' | 'PASSWORD_LOCKED' | 'EXPIRED' | 'BURNED';
+  status: 'ACTIVE' | 'PASSWORD_LOCKED' | 'EXPIRED' | 'BURNED' | 'VIEW_LIMIT_REACHED';
   dropType: 'text' | 'files';
   requiresPassword?: boolean;
   textContent?: string | null;
@@ -110,6 +110,24 @@ export interface DropDetailsResult {
   viewCount?: number;
   maxViews?: number | null;
   burnAfterReading?: boolean;
+  viewToken?: string;
+  isOwner?: boolean;
+}
+
+export interface DropMetadataResult {
+  code: string;
+  status: 'ACTIVE' | 'PASSWORD_LOCKED' | 'EXPIRED' | 'VIEW_LIMIT_REACHED' | 'BURNED' | 'DELETED';
+  dropType: 'text' | 'files';
+  fileCount: number;
+  totalSizeBytes: number;
+  createdAt: string;
+  expiresAt: string;
+  burnAfterReading: boolean;
+  requiresPassword: boolean;
+  maxViews: number | null;
+  viewCount: number;
+  isExpired: boolean;
+  isViewLimitReached: boolean;
 }
 
 export interface UnlockResult {
@@ -484,21 +502,21 @@ export class DropService {
    * Asserts that a drop is active, not expired, not burned, not deleted, and within view limits.
    */
   public assertDropActive(drop: IDropDocument): void {
+    if (drop.status === 'deleted') {
+      throw new DropServiceError(410, 'DROP_DELETED', 'This Drop was permanently deleted by its owner.');
+    }
+    if (drop.status === 'burned') {
+      throw new DropServiceError(410, 'DROP_BURNED', 'This Drop was burned after reading.');
+    }
+    if (drop.isExpired || drop.expiresAt <= new Date()) {
+      throw new DropServiceError(410, 'DROP_EXPIRED', 'This Drop has expired.');
+    }
     if (drop.viewLimit !== null && drop.viewCount >= drop.viewLimit) {
       throw new DropServiceError(
         410,
         'VIEW_LIMIT_REACHED',
         'This Drop has reached its maximum view limit and is no longer accessible.'
       );
-    }
-    if (drop.status === 'burned') {
-      throw new DropServiceError(410, 'DROP_BURNED', 'This Drop was burned after reading.');
-    }
-    if (drop.status === 'deleted') {
-      throw new DropServiceError(410, 'DROP_DELETED', 'This Drop was permanently deleted by its owner.');
-    }
-    if (drop.isExpired || drop.expiresAt <= new Date()) {
-      throw new DropServiceError(410, 'DROP_EXPIRED', 'This Drop has expired.');
     }
   }
 
@@ -514,11 +532,58 @@ export class DropService {
   }
 
   /**
+   * Retrieves safe public metadata for a Drop without consuming views or incrementing counters.
+   */
+  public async getDropMetadata(code: string): Promise<DropMetadataResult> {
+    const cleanCode = (code || '').trim().toUpperCase();
+    if (!cleanCode || cleanCode.length !== 6) {
+      throw new DropServiceError(404, 'DROP_NOT_FOUND', 'Drop not found.');
+    }
+
+    const drop = await this.dropRepo.findByCode(cleanCode);
+    if (!drop) {
+      throw new DropServiceError(404, 'DROP_NOT_FOUND', 'Drop not found.');
+    }
+
+    const isTextDrop = drop.type === 'text';
+    const isExpired = drop.isExpired || drop.expiresAt <= new Date() || drop.status === 'expired';
+    const isViewLimitReached = drop.viewLimit !== null && drop.viewCount >= drop.viewLimit;
+
+    return {
+      code: drop.code,
+      status: isExpired
+        ? 'EXPIRED'
+        : isViewLimitReached
+        ? 'VIEW_LIMIT_REACHED'
+        : drop.status === 'burned'
+        ? 'BURNED'
+        : drop.status === 'deleted'
+        ? 'DELETED'
+        : Boolean(drop.passwordHash)
+        ? 'PASSWORD_LOCKED'
+        : 'ACTIVE',
+      dropType: isTextDrop ? 'text' : 'files',
+      fileCount: drop.fileCount,
+      totalSizeBytes: drop.totalSizeBytes,
+      createdAt: drop.createdAt.toISOString(),
+      expiresAt: drop.expiresAt.toISOString(),
+      burnAfterReading: drop.burnAfterReading,
+      requiresPassword: Boolean(drop.passwordHash),
+      maxViews: drop.viewLimit,
+      viewCount: drop.viewCount,
+      isExpired,
+      isViewLimitReached,
+    };
+  }
+
+  /**
    * Retrieves Drop metadata and unlocked content for a given code.
+   * Supports session-aware access tokens so that active viewers, React Strict Mode,
+   * and owner inspections do not consume multiple views or cause false expirations.
    */
   public async getDrop(
     code: string,
-    options?: { unlockToken?: string; password?: string }
+    options?: { unlockToken?: string; password?: string; ownerToken?: string; viewToken?: string }
   ): Promise<DropDetailsResult> {
     const cleanCode = (code || '').trim().toUpperCase();
     if (!cleanCode || cleanCode.length !== 6) {
@@ -530,13 +595,45 @@ export class DropService {
       throw new DropServiceError(404, 'DROP_NOT_FOUND', 'Drop not found.');
     }
 
-    // Check expiration, status, and view limit
-    this.assertDropActive(drop);
-
     const isTextDrop = drop.type === 'text';
 
-    // Password Challenge Check
-    if (drop.passwordHash) {
+    // 1. Check if caller is Drop owner (owner inspection does not consume views)
+    let isOwner = false;
+    if (options?.ownerToken) {
+      isOwner = verifyDeletionToken(options.ownerToken, drop.ownerDeleteTokenHash);
+    }
+
+    // 2. Check if caller has an existing valid active view session token
+    const tokenToCheck = options?.unlockToken || options?.viewToken;
+    let isExistingSession = false;
+    if (tokenToCheck) {
+      isExistingSession = verifyUnlockToken(tokenToCheck, drop.code, env.JWT_SECRET);
+    }
+
+    // 3. Status and Expiration Checks
+    if (drop.status === 'deleted') {
+      throw new DropServiceError(410, 'DROP_DELETED', 'This Drop was permanently deleted by its owner.');
+    }
+    if (drop.status === 'burned') {
+      throw new DropServiceError(410, 'DROP_BURNED', 'This Drop was burned after reading.');
+    }
+    if (drop.isExpired || drop.expiresAt <= new Date()) {
+      throw new DropServiceError(410, 'DROP_EXPIRED', 'This Drop has expired.');
+    }
+
+    // If new view attempt (not owner and no existing active session), enforce view limit
+    if (!isOwner && !isExistingSession) {
+      if (drop.viewLimit !== null && drop.viewCount >= drop.viewLimit) {
+        throw new DropServiceError(
+          410,
+          'VIEW_LIMIT_REACHED',
+          'This Drop has reached its maximum view limit and is no longer accessible.'
+        );
+      }
+    }
+
+    // Password Challenge Check (if protected and not owner)
+    if (drop.passwordHash && !isOwner) {
       const isAuthorized = await this.checkAuthorization(drop, options);
       if (!isAuthorized) {
         // Return challenge metadata without revealing content or file links
@@ -547,12 +644,14 @@ export class DropService {
           requiresPassword: true,
           expiresAt: drop.expiresAt.toISOString(),
           createdAt: drop.createdAt.toISOString(),
+          viewCount: drop.viewCount,
+          maxViews: drop.viewLimit,
         };
       }
     }
 
     // Burn-After-Reading handling for text drops: atomic claim and burn
-    if (drop.burnAfterReading && isTextDrop) {
+    if (drop.burnAfterReading && isTextDrop && !isOwner) {
       const burnedDrop = await this.dropRepo.atomicBurnTextDrop(drop._id.toString());
       if (!burnedDrop) {
         throw new DropServiceError(410, 'DROP_BURNED', 'This Drop was already burned after reading.');
@@ -572,19 +671,26 @@ export class DropService {
       };
     }
 
-    // Atomic View Count Increment with Strict View Limit Verification
-    const viewResult = await this.dropRepo.atomicIncrementViewIfAllowed(
-      drop._id.toString(),
-      drop.viewLimit
-    );
-    if (!viewResult.allowed || !viewResult.drop) {
-      throw new DropServiceError(
-        410,
-        'VIEW_LIMIT_REACHED',
-        'This Drop has reached its maximum view limit and is no longer accessible.'
+    let activeSessionToken: string | undefined = tokenToCheck;
+    let newViewCount = drop.viewCount;
+
+    // Increment view count ONLY if this is a new viewer (not owner and not an existing session)
+    if (!isOwner && !isExistingSession) {
+      const viewResult = await this.dropRepo.atomicIncrementViewIfAllowed(
+        drop._id.toString(),
+        drop.viewLimit
       );
+      if (!viewResult.allowed || !viewResult.drop) {
+        throw new DropServiceError(
+          410,
+          'VIEW_LIMIT_REACHED',
+          'This Drop has reached its maximum view limit and is no longer accessible.'
+        );
+      }
+      newViewCount = viewResult.drop.viewCount;
+      // Issue session token so subsequent refreshes/previews/downloads in this session do not re-increment or fail
+      activeSessionToken = createUnlockToken(cleanCode, drop.expiresAt, env.JWT_SECRET);
     }
-    const newViewCount = viewResult.drop.viewCount;
 
     if (isTextDrop) {
       return {
@@ -597,6 +703,8 @@ export class DropService {
         viewCount: newViewCount,
         maxViews: drop.viewLimit,
         burnAfterReading: drop.burnAfterReading,
+        viewToken: activeSessionToken,
+        isOwner,
       };
     }
 
@@ -613,7 +721,7 @@ export class DropService {
 
     return {
       code: drop.code,
-      status: drop.burnAfterReading ? 'BURNED' : 'ACTIVE',
+      status: 'ACTIVE',
       dropType: 'files',
       totalSizeBytes: drop.totalSizeBytes,
       fileCount: drop.fileCount,
@@ -625,6 +733,8 @@ export class DropService {
       viewCount: newViewCount,
       maxViews: drop.viewLimit,
       burnAfterReading: drop.burnAfterReading,
+      viewToken: activeSessionToken,
+      isOwner,
     };
   }
 
@@ -677,7 +787,7 @@ export class DropService {
   public async getFileForDownload(
     code: string,
     fileId: string,
-    options?: { unlockToken?: string; password?: string }
+    options?: { unlockToken?: string; password?: string; ownerToken?: string; viewToken?: string }
   ): Promise<{ drop: IDropDocument; fileDoc: IDropFileDocument; absolutePath: string }> {
     const cleanCode = (code || '').trim().toUpperCase();
     const drop = await this.dropRepo.findByCode(cleanCode);
@@ -685,11 +795,36 @@ export class DropService {
       throw new DropServiceError(404, 'DROP_NOT_FOUND', 'Drop not found.');
     }
 
-    this.assertDropActive(drop);
+    if (drop.status === 'deleted') {
+      throw new DropServiceError(410, 'DROP_DELETED', 'This Drop was permanently deleted by its owner.');
+    }
+    if (drop.status === 'burned') {
+      throw new DropServiceError(410, 'DROP_BURNED', 'This Drop was burned after reading.');
+    }
+    if (drop.isExpired || drop.expiresAt <= new Date()) {
+      throw new DropServiceError(410, 'DROP_EXPIRED', 'This Drop has expired.');
+    }
 
-    const isAuthed = await this.checkAuthorization(drop, options);
-    if (!isAuthed) {
-      throw new DropServiceError(401, 'UNAUTHORIZED', 'Password or unlock token required to download file.');
+    const tokenToCheck = options?.unlockToken || options?.viewToken;
+    const hasValidToken = tokenToCheck ? verifyUnlockToken(tokenToCheck, drop.code, env.JWT_SECRET) : false;
+    const isOwner = options?.ownerToken ? verifyDeletionToken(options.ownerToken, drop.ownerDeleteTokenHash) : false;
+
+    if (drop.passwordHash) {
+      const isAuthed = hasValidToken || isOwner || (options?.password && (await verifyPassword(options.password, drop.passwordHash)));
+      if (!isAuthed) {
+        throw new DropServiceError(401, 'UNAUTHORIZED', 'Password or unlock token required to download file.');
+      }
+    }
+
+    // View-limit check: if view limit is reached, only authorized sessions (or owner) can download
+    if (drop.viewLimit !== null && drop.viewCount >= drop.viewLimit) {
+      if (!hasValidToken && !isOwner) {
+        throw new DropServiceError(
+          410,
+          'VIEW_LIMIT_REACHED',
+          'This Drop has reached its maximum view limit and is no longer accessible.'
+        );
+      }
     }
 
     if (!Types.ObjectId.isValid(fileId)) {
@@ -722,7 +857,7 @@ export class DropService {
    */
   public async getFilesForZip(
     code: string,
-    options?: { unlockToken?: string; password?: string }
+    options?: { unlockToken?: string; password?: string; ownerToken?: string; viewToken?: string }
   ): Promise<{ drop: IDropDocument; files: Array<{ fileDoc: IDropFileDocument; absolutePath: string }> }> {
     const cleanCode = (code || '').trim().toUpperCase();
     const drop = await this.dropRepo.findByCode(cleanCode);
@@ -730,15 +865,40 @@ export class DropService {
       throw new DropServiceError(404, 'DROP_NOT_FOUND', 'Drop not found.');
     }
 
-    this.assertDropActive(drop);
-
     if (drop.type === 'text') {
       throw new DropServiceError(400, 'NOT_A_FILE_DROP', 'Text drops cannot be downloaded as a ZIP.');
     }
 
-    const isAuthed = await this.checkAuthorization(drop, options);
-    if (!isAuthed) {
-      throw new DropServiceError(401, 'UNAUTHORIZED', 'Password or unlock token required to download files.');
+    if (drop.status === 'deleted') {
+      throw new DropServiceError(410, 'DROP_DELETED', 'This Drop was permanently deleted by its owner.');
+    }
+    if (drop.status === 'burned') {
+      throw new DropServiceError(410, 'DROP_BURNED', 'This Drop was burned after reading.');
+    }
+    if (drop.isExpired || drop.expiresAt <= new Date()) {
+      throw new DropServiceError(410, 'DROP_EXPIRED', 'This Drop has expired.');
+    }
+
+    const tokenToCheck = options?.unlockToken || options?.viewToken;
+    const hasValidToken = tokenToCheck ? verifyUnlockToken(tokenToCheck, drop.code, env.JWT_SECRET) : false;
+    const isOwner = options?.ownerToken ? verifyDeletionToken(options.ownerToken, drop.ownerDeleteTokenHash) : false;
+
+    if (drop.passwordHash) {
+      const isAuthed = hasValidToken || isOwner || (options?.password && (await verifyPassword(options.password, drop.passwordHash)));
+      if (!isAuthed) {
+        throw new DropServiceError(401, 'UNAUTHORIZED', 'Password or unlock token required to download files.');
+      }
+    }
+
+    // View-limit check: if view limit is reached, only authorized sessions (or owner) can download
+    if (drop.viewLimit !== null && drop.viewCount >= drop.viewLimit) {
+      if (!hasValidToken && !isOwner) {
+        throw new DropServiceError(
+          410,
+          'VIEW_LIMIT_REACHED',
+          'This Drop has reached its maximum view limit and is no longer accessible.'
+        );
+      }
     }
 
     const fileDocs = await this.dropFileRepo.findByDropId(drop._id);

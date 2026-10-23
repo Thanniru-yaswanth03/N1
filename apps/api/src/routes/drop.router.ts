@@ -114,12 +114,14 @@ function handleUpload(req: Request, res: Response, next: NextFunction): void {
   }
 }
 
-/**
- * Extracts authorization tokens or passwords from headers or query parameters.
- */
-function extractAuth(req: Request): { unlockToken?: string; password?: string } {
+function extractAuth(req: Request): {
+  unlockToken?: string;
+  viewToken?: string;
+  password?: string;
+  ownerToken?: string;
+} {
   const authHeader = req.headers.authorization;
-  let unlockToken = req.headers['x-unlock-token'] as string | undefined;
+  let unlockToken = (req.headers['x-unlock-token'] || req.headers['x-view-token']) as string | undefined;
   if (!unlockToken && authHeader?.startsWith('Bearer ')) {
     unlockToken = authHeader.slice(7).trim();
   }
@@ -127,11 +129,18 @@ function extractAuth(req: Request): { unlockToken?: string; password?: string } 
     unlockToken = req.query['token'];
   }
 
+  const viewToken = (req.headers['x-view-token'] as string | undefined) || unlockToken;
+
   const password =
     (req.headers['x-drop-password'] as string | undefined) ||
     (typeof req.query['password'] === 'string' ? req.query['password'] : undefined);
 
-  return { unlockToken, password };
+  const ownerToken =
+    (req.headers['x-owner-token'] as string | undefined) ||
+    (req.headers['x-deletion-token'] as string | undefined) ||
+    (typeof req.query['owner_token'] === 'string' ? req.query['owner_token'] : undefined);
+
+  return { unlockToken, viewToken, password, ownerToken };
 }
 
 /**
@@ -321,6 +330,30 @@ async function handleZipDownload(req: Request, res: Response, next: NextFunction
  */
 dropRouter.get('/:code/download-zip', codeLookupRateLimiter, handleZipDownload);
 dropRouter.get('/:code/download-all', codeLookupRateLimiter, handleZipDownload);
+
+/**
+ * GET /:code/meta
+ * Retrieves safe public metadata for a Drop without consuming views.
+ */
+dropRouter.get(
+  '/:code/meta',
+  codeLookupRateLimiter,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const rawCode = req.params['code'];
+      const code = typeof rawCode === 'string' ? rawCode : '';
+      const result = await dropService.getDropMetadata(code);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: unknown) {
+      handleServiceError(err, res, next);
+    }
+  }
+);
 
 /**
  * GET /:code

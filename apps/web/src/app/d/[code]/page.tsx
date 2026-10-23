@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import {
@@ -133,6 +133,17 @@ export default function ViewDropPage() {
     }
   };
 
+  const [viewToken, setViewToken] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return sessionStorage.getItem(`n1_vt_${code}`);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+
   const fetchDrop = useCallback(
     async (token?: string) => {
       setIsLoading(true);
@@ -141,7 +152,15 @@ export default function ViewDropPage() {
 
       try {
         const headers: Record<string, string> = { Accept: 'application/json' };
-        const activeToken = token || unlockToken;
+        let storedToken: string | null = null;
+        if (typeof window !== 'undefined') {
+          try {
+            storedToken = sessionStorage.getItem(`n1_vt_${code}`);
+          } catch {
+            // ignore
+          }
+        }
+        const activeToken = token || unlockToken || viewToken || storedToken;
         if (activeToken) {
           headers['Authorization'] = `Bearer ${activeToken}`;
         }
@@ -154,13 +173,22 @@ export default function ViewDropPage() {
           const errCode = json?.error?.code;
           if (errCode === 'VIEW_LIMIT_REACHED') {
             setExpiredReason('VIEW_LIMIT_REACHED');
-            setExpiredExplanation(json?.error?.message || 'This Drop has reached its maximum view limit and has been automatically deleted.');
+            setExpiredExplanation(
+              json?.error?.message ||
+                'This Drop has reached its maximum view limit and is no longer accessible.'
+            );
           } else if (errCode === 'DROP_BURNED' || errCode === 'DROP_DELETED') {
             setExpiredReason('DESTROYED');
-            setExpiredExplanation(json?.error?.message || 'This Drop was burned after reading or permanently deleted by its creator.');
+            setExpiredExplanation(
+              json?.error?.message ||
+                'This Drop was burned after reading or permanently deleted by its creator.'
+            );
           } else {
             setExpiredReason('EXPIRED');
-            setExpiredExplanation(json?.error?.message || 'This Drop exceeded its lifetime and was purged by the automatic expiration engine.');
+            setExpiredExplanation(
+              json?.error?.message ||
+                'This Drop exceeded its lifetime and was purged by the automatic expiration engine.'
+            );
           }
           setIsLoading(false);
           return;
@@ -189,8 +217,21 @@ export default function ViewDropPage() {
         // Check if expiresAt in the past
         if (json.data?.expiresAt && new Date(json.data.expiresAt).getTime() <= Date.now()) {
           setIsExpired(true);
+          setExpiredReason('EXPIRED');
+          setExpiredExplanation('This Drop exceeded its lifetime and was purged by the automatic expiration engine.');
           setIsLoading(false);
           return;
+        }
+
+        if (json.data?.viewToken) {
+          setViewToken(json.data.viewToken);
+          if (typeof window !== 'undefined') {
+            try {
+              sessionStorage.setItem(`n1_vt_${code}`, json.data.viewToken);
+            } catch {
+              // ignore storage issues
+            }
+          }
         }
 
         setDrop(json.data);
@@ -204,11 +245,16 @@ export default function ViewDropPage() {
         setIsLoading(false);
       }
     },
-    [code, unlockToken]
+    [code, unlockToken, viewToken]
   );
 
+  const initialMountRef = useRef<string | null>(null);
   useEffect(() => {
     if (code) {
+      if (initialMountRef.current === code) {
+        return;
+      }
+      initialMountRef.current = code;
       fetchDrop();
     }
   }, [code, fetchDrop]);
@@ -274,7 +320,8 @@ export default function ViewDropPage() {
   const getDownloadUrl = (file: PublicFileMeta, inline = false): string => {
     const params = new URLSearchParams();
     if (inline) params.set('inline', 'true');
-    if (unlockToken) params.set('token', unlockToken);
+    const activeToken = unlockToken || viewToken;
+    if (activeToken) params.set('token', activeToken);
     const queryString = params.toString();
     const rawUrl = file.downloadUrl;
     const base = apiClient.getApiBaseUrl();
@@ -291,8 +338,9 @@ export default function ViewDropPage() {
     const fullUrl = rawUrl.startsWith('http')
       ? rawUrl
       : `${base}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
-    return unlockToken
-      ? `${fullUrl}?token=${encodeURIComponent(unlockToken)}`
+    const activeToken = unlockToken || viewToken;
+    return activeToken
+      ? `${fullUrl}?token=${encodeURIComponent(activeToken)}`
       : fullUrl;
   };
 
@@ -508,7 +556,11 @@ export default function ViewDropPage() {
               )}
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-n1-text-primary tracking-tight font-brand">
-              This Drop has expired.
+              {isViewLimit
+                ? 'View Limit Reached'
+                : isDestroyed
+                ? 'This Drop Was Destroyed'
+                : 'This Drop Has Expired'}
             </h1>
             <p className="text-sm font-semibold text-rose-400">
               {isViewLimit

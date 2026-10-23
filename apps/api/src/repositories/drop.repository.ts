@@ -88,13 +88,6 @@ export class DropRepository implements IDropRepository {
       return { allowed: false, drop: null };
     }
 
-    // If new viewCount meets or exceeds viewLimit, transition to expired
-    if (viewLimit !== null && updated.viewCount >= viewLimit) {
-      await Drop.findByIdAndUpdate(id, {
-        $set: { status: 'expired', isExpired: true },
-      }).exec();
-    }
-
     return { allowed: true, drop: updated };
   }
 
