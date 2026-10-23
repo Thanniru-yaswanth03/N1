@@ -222,10 +222,8 @@ export function BoardHeader({
                   key={t.id}
                   type="button"
                   onClick={() => {
-                    if (confirm(`Load "${t.name}" template? This will append the template elements to your board.`)) {
-                      onSelectTemplate(t.id);
-                      setTemplateMenuOpen(false);
-                    }
+                    onSelectTemplate(t.id);
+                    setTemplateMenuOpen(false);
                   }}
                   className={`w-full px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors flex items-center justify-between ${
                     template === t.id

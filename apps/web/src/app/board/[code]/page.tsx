@@ -51,6 +51,8 @@ export default function StudyBoardRoomPage() {
   // Undo / Redo history
   const [history, setHistory] = useState<BoardElement[][]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const historyIndexRef = useRef<number>(-1);
+  const historyRef = useRef<BoardElement[][]>([]);
 
   // Collaboration state
   const [isConnected, setIsConnected] = useState<boolean>(false);
@@ -80,9 +82,12 @@ export default function StudyBoardRoomPage() {
         }
 
         setRoom(data);
-        setElements(data.elements || []);
-        setHistory([data.elements || []]);
+        const initElems = data.elements || [];
+        setElements(initElems);
+        setHistory([initElems]);
         setHistoryIndex(0);
+        historyIndexRef.current = 0;
+        historyRef.current = [initElems];
         setLoading(false);
       })
       .catch(err => {
@@ -166,45 +171,69 @@ export default function StudyBoardRoomPage() {
     };
   }, [roomCode, isExpired, loading]);
 
-  // Push history state
+  // Push history state with deduplication to prevent dead undo clicks
   const handleHistoryPush = useCallback(
     (nextElements: BoardElement[]) => {
-      setHistory(prev => {
-        const sliced = prev.slice(0, historyIndex + 1);
-        return [...sliced, nextElements].slice(-50); // limit to 50 undo states
-      });
-      setHistoryIndex(prev => prev + 1);
+      const curIdx = historyIndexRef.current;
+      const hist = historyRef.current;
+      const current = hist[curIdx];
+
+      // Avoid pushing consecutive identical states
+      if (
+        current &&
+        current.length === nextElements.length &&
+        JSON.stringify(current) === JSON.stringify(nextElements)
+      ) {
+        return;
+      }
+
+      const sliced = hist.slice(0, Math.max(0, curIdx + 1));
+      const nextHist = [...sliced, nextElements];
+      if (nextHist.length > 50) {
+        nextHist.shift();
+      }
+      const nextIdx = nextHist.length - 1;
+      historyRef.current = nextHist;
+      historyIndexRef.current = nextIdx;
+      setHistory(nextHist);
+      setHistoryIndex(nextIdx);
     },
-    [historyIndex]
+    []
   );
 
   // Undo
   const handleUndo = useCallback(() => {
-    if (historyIndex > 0) {
-      const prevIdx = historyIndex - 1;
-      const target = history[prevIdx];
+    const curIdx = historyIndexRef.current;
+    const hist = historyRef.current;
+    if (curIdx > 0) {
+      const prevIdx = curIdx - 1;
+      const target = hist[prevIdx];
       if (target) {
-        setElements(target);
+        historyIndexRef.current = prevIdx;
         setHistoryIndex(prevIdx);
+        setElements(target);
         socketRef.current?.sendElementsUpdate(target);
         syncBoardElements(roomCode, target);
       }
     }
-  }, [historyIndex, history, roomCode]);
+  }, [roomCode]);
 
   // Redo
   const handleRedo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const nextIdx = historyIndex + 1;
-      const target = history[nextIdx];
+    const curIdx = historyIndexRef.current;
+    const hist = historyRef.current;
+    if (curIdx < hist.length - 1) {
+      const nextIdx = curIdx + 1;
+      const target = hist[nextIdx];
       if (target) {
-        setElements(target);
+        historyIndexRef.current = nextIdx;
         setHistoryIndex(nextIdx);
+        setElements(target);
         socketRef.current?.sendElementsUpdate(target);
         syncBoardElements(roomCode, target);
       }
     }
-  }, [historyIndex, history, roomCode]);
+  }, [roomCode]);
 
   // Global Keyboard Shortcuts (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z)
   useEffect(() => {
@@ -259,17 +288,15 @@ export default function StudyBoardRoomPage() {
     clearBoardElements(roomCode);
   }, [roomCode, handleHistoryPush]);
 
-  // Switch / Apply Template
+  // Switch / Apply Template cleanly without merging/overlapping
   const handleSelectTemplate = useCallback(
     (t: BoardTemplate) => {
       const newItems = getTemplateElements(t);
-      setElements(prev => {
-        const next = [...prev, ...newItems];
-        handleHistoryPush(next);
-        socketRef.current?.sendElementsUpdate(next);
-        syncBoardElements(roomCode, next);
-        return next;
-      });
+      setElements(newItems);
+      handleHistoryPush(newItems);
+      socketRef.current?.sendElementsUpdate(newItems);
+      syncBoardElements(roomCode, newItems);
+      setRoom(prev => (prev ? { ...prev, template: t } : null));
     },
     [roomCode, handleHistoryPush]
   );
@@ -394,6 +421,7 @@ export default function StudyBoardRoomPage() {
           activeTool={activeTool}
           setActiveTool={setActiveTool}
           activeColor={activeColor}
+          setActiveColor={setActiveColor}
           strokeWidth={strokeWidth}
           activeShape={activeShape}
           zoom={zoom}

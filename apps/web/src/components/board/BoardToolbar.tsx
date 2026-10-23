@@ -74,6 +74,11 @@ export function BoardToolbar({
 }: BoardToolbarProps) {
   const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const [colorTrayOpen, setColorTrayOpen] = useState(false);
+  const [customHex, setCustomHex] = useState(activeColor);
+
+  useEffect(() => {
+    setCustomHex(activeColor);
+  }, [activeColor]);
 
   return (
     <>
@@ -84,27 +89,79 @@ export function BoardToolbar({
       >
         {/* Expandable Color & Stroke Tray (Floating above toolbar) */}
         {colorTrayOpen && (
-          <div className="mb-2 p-2 rounded-2xl border border-cyan-500/20 bg-[#10101c]/95 backdrop-blur-xl shadow-2xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-150">
-            <div className="flex items-center gap-1.5 flex-wrap max-w-[260px] sm:max-w-none">
-              {PALETTE.map(p => (
-                <button
-                  key={p.hex}
-                  type="button"
-                  onClick={() => setActiveColor(p.hex)}
-                  title={p.name}
-                  aria-label={`Select color ${p.name}`}
-                  style={{ backgroundColor: p.hex }}
-                  className={`w-6 h-6 rounded-full transition-transform ${
-                    activeColor === p.hex
-                      ? 'scale-125 ring-2 ring-cyan-400 ring-offset-2 ring-offset-[#09090f]'
-                      : 'opacity-80 hover:opacity-100 hover:scale-110'
-                  }`}
+          <div className="mb-2 p-2.5 rounded-2xl border border-cyan-500/25 bg-[#10101c]/95 backdrop-blur-xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-150">
+            {/* Presets + Full RGB Color Picker + Hex Input */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Presets */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {PALETTE.map(p => (
+                  <button
+                    key={p.hex}
+                    type="button"
+                    onClick={() => {
+                      setActiveColor(p.hex);
+                      setCustomHex(p.hex);
+                    }}
+                    title={p.name}
+                    aria-label={`Select color ${p.name}`}
+                    style={{ backgroundColor: p.hex }}
+                    className={`w-6 h-6 rounded-full transition-transform ${
+                      activeColor.toLowerCase() === p.hex.toLowerCase()
+                        ? 'scale-125 ring-2 ring-cyan-400 ring-offset-2 ring-offset-[#09090f]'
+                        : 'opacity-80 hover:opacity-100 hover:scale-110'
+                    }`}
+                  />
+                ))}
+              </div>
+
+              <div className="w-[1px] h-5 bg-white/10 mx-0.5 shrink-0 hidden sm:block" />
+
+              {/* RGB / Custom Color Wheel Picker */}
+              <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-xl px-2 py-1">
+                <label
+                  title="Open RGB Color Spectrum Dialog"
+                  className="relative w-5 h-5 rounded-full cursor-pointer overflow-hidden transition-transform hover:scale-110 shrink-0 ring-1 ring-white/30 flex items-center justify-center"
+                  style={{
+                    background:
+                      'conic-gradient(from 180deg at 50% 50%, #ff0000 0deg, #ffff00 60deg, #00ff00 120deg, #00ffff 180deg, #0000ff 240deg, #ff00ff 300deg, #ff0000 360deg)',
+                  }}
+                >
+                  <input
+                    type="color"
+                    value={activeColor.startsWith('#') && activeColor.length === 7 ? activeColor : '#00f0ff'}
+                    onChange={e => {
+                      setActiveColor(e.target.value);
+                      setCustomHex(e.target.value);
+                    }}
+                    className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                  />
+                </label>
+
+                {/* Direct Hex/RGB code input */}
+                <span className="text-[10px] font-mono text-zinc-400 font-bold">#</span>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={customHex.replace('#', '')}
+                  onChange={e => {
+                    const clean = e.target.value.replace(/[^0-9a-fA-F]/g, '');
+                    setCustomHex('#' + clean);
+                    if (clean.length === 6 || clean.length === 3) {
+                      setActiveColor('#' + clean);
+                    }
+                  }}
+                  placeholder="00f0ff"
+                  className="w-14 bg-transparent text-[11px] font-mono text-white outline-none uppercase font-semibold"
                 />
-              ))}
+                <div
+                  style={{ backgroundColor: activeColor }}
+                  className="w-3.5 h-3.5 rounded-full ring-1 ring-white/20 shrink-0"
+                />
+              </div>
             </div>
 
             {/* Stroke Width Toggle */}
-            <div className="flex items-center gap-1 pl-2 border-l border-[var(--color-border-subtle)] shrink-0">
+            <div className="flex items-center gap-1 pl-2 border-t sm:border-t-0 sm:border-l border-[var(--color-border-subtle)] shrink-0">
               {[2, 4, 8].map(w => (
                 <button
                   key={w}

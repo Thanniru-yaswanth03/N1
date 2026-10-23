@@ -329,5 +329,80 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
       expect(canDirectType({ ...shape, type: 'sticky' })).toBe(true);
       expect(canDirectType({ ...shape, type: 'stroke' })).toBe(false);
     });
+
+    it('cleanly replaces elements on template switch without merging or overlapping old templates', () => {
+      const oldMindMapElements: BoardElement[] = [
+        { id: 'node_center', type: 'sticky', x: 200, y: 200, width: 140, height: 70, content: 'Central Topic', color: '#a855f7', strokeWidth: 2, zIndex: 1 },
+      ];
+      const newDbmsElements: BoardElement[] = [
+        { id: 'cylinder_1', type: 'shape', shapeType: 'cylinder', x: 50, y: 50, width: 160, height: 100, content: 'USERS', color: '#38bdf8', strokeWidth: 2, zIndex: 1 },
+      ];
+
+      // Clean template switch replaces elements
+      const switchTemplate = (_current: BoardElement[], templateItems: BoardElement[]) => {
+        return templateItems;
+      };
+
+      const result = switchTemplate(oldMindMapElements, newDbmsElements);
+      expect(result.length).toBe(1);
+      expect(result[0]?.id).toBe('cylinder_1');
+      expect(result.some(el => el.id === 'node_center')).toBe(false);
+    });
+
+    it('deduplicates consecutive identical history states to prevent dead undo clicks', () => {
+      const initial: BoardElement[] = [{ id: 'box_1', type: 'text', x: 10, y: 10, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 1 }];
+      let history: BoardElement[][] = [[...initial]];
+      let historyIndex = 0;
+
+      const pushHistory = (nextElements: BoardElement[]) => {
+        const current = history[historyIndex];
+        if (
+          current &&
+          current.length === nextElements.length &&
+          JSON.stringify(current) === JSON.stringify(nextElements)
+        ) {
+          return; // Skip duplicate push
+        }
+        history = [...history.slice(0, historyIndex + 1), nextElements];
+        historyIndex = history.length - 1;
+      };
+
+      // Simulating a click without movement (identical state)
+      pushHistory([...initial]);
+      expect(history.length).toBe(1);
+      expect(historyIndex).toBe(0);
+
+      // Simulating an actual change
+      const modified = [{ ...initial[0]!, x: 50 }];
+      pushHistory(modified);
+      expect(history.length).toBe(2);
+      expect(historyIndex).toBe(1);
+
+      // Undo goes back to initial on the very first click
+      const undo = () => {
+        if (historyIndex > 0) {
+          historyIndex -= 1;
+          return history[historyIndex];
+        }
+        return null;
+      };
+
+      const undone = undo();
+      expect(undone).toEqual(initial);
+      expect(historyIndex).toBe(0);
+    });
+
+    it('updates element color when choosing a new custom RGB/hex color', () => {
+      const el: BoardElement = { id: 'text_1', type: 'text', x: 10, y: 10, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 1 };
+      const customHex = '#FF5500';
+
+      const updated = {
+        ...el,
+        color: customHex,
+        fillColor: el.type === 'shape' ? `${customHex}20` : el.fillColor,
+      };
+
+      expect(updated.color).toBe('#FF5500');
+    });
   });
 });

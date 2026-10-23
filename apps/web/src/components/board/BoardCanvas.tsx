@@ -10,6 +10,7 @@ export interface BoardCanvasProps {
   activeTool: CanvasTool;
   setActiveTool?: (tool: CanvasTool) => void;
   activeColor: string;
+  setActiveColor?: (color: string) => void;
   strokeWidth: number;
   activeShape: BoardShapeType;
   zoom: number;
@@ -69,6 +70,7 @@ export function BoardCanvas({
   activeTool,
   setActiveTool,
   activeColor,
+  setActiveColor,
   strokeWidth,
   activeShape,
   zoom,
@@ -136,6 +138,40 @@ export function BoardCanvas({
       setSelectedIds(new Set());
     }
   }, [selectedId]);
+
+  const elementsRef = useRef<BoardElement[]>(elements);
+  const hasMovedRef = useRef<boolean>(false);
+  useEffect(() => {
+    elementsRef.current = elements;
+  }, [elements]);
+
+  // Update color of selected elements when activeColor changes
+  useEffect(() => {
+    if (selectedIds.size > 0 && !editingId) {
+      setElements(prev => {
+        let changed = false;
+        const next = prev.map(el => {
+          if (selectedIds.has(el.id) && el.color !== activeColor) {
+            changed = true;
+            return {
+              ...el,
+              color: activeColor,
+              fillColor: el.type === 'shape' ? `${activeColor}20` : el.fillColor,
+              updatedAt: Date.now(),
+            };
+          }
+          return el;
+        });
+        if (changed) {
+          elementsRef.current = next;
+          onElementsChange?.(next);
+          onHistoryPush?.(next);
+          return next;
+        }
+        return prev;
+      });
+    }
+  }, [activeColor]);
 
   // Convert screen coordinates to canvas world coordinates
   const screenToWorld = useCallback(
@@ -1063,6 +1099,7 @@ export function BoardCanvas({
 
   // Pointer Down Handler
   const handlePointerDown = (e: React.PointerEvent) => {
+    hasMovedRef.current = false;
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     // Multi-touch pinch-to-zoom
@@ -1296,6 +1333,7 @@ export function BoardCanvas({
 
     // Resizing active element via handles
     if (resizingHandle && resizeOrigin && selectedId) {
+      hasMovedRef.current = true;
       const dx = world.x - resizeOrigin.startX;
       const dy = world.y - resizeOrigin.startY;
 
@@ -1346,6 +1384,7 @@ export function BoardCanvas({
 
     // Dragging elements
     if (isDraggingElement && selectedId) {
+      hasMovedRef.current = true;
       const mainStart = dragStartMap.get(selectedId);
       if (mainStart) {
         const newMainX = world.x - dragOffset.x;
@@ -1449,16 +1488,20 @@ export function BoardCanvas({
     if (resizingHandle) {
       setResizingHandle(null);
       setResizeOrigin(null);
-      onElementsChange?.(elements);
-      onHistoryPush?.(elements);
+      if (hasMovedRef.current) {
+        onElementsChange?.(elementsRef.current);
+        onHistoryPush?.(elementsRef.current);
+      }
       return;
     }
 
     if (isDraggingElement) {
       setIsDraggingElement(false);
       setDragStartMap(new Map());
-      onElementsChange?.(elements);
-      onHistoryPush?.(elements);
+      if (hasMovedRef.current) {
+        onElementsChange?.(elementsRef.current);
+        onHistoryPush?.(elementsRef.current);
+      }
       return;
     }
 
@@ -1670,6 +1713,45 @@ export function BoardCanvas({
               >
                 <span>✏️ Edit</span>
               </button>
+            )}
+
+            {/* Element Color Swatch Picker */}
+            {selectedElement && (
+              <label
+                title="Change Element Color"
+                className="w-5 h-5 rounded-full cursor-pointer overflow-hidden ring-1 ring-white/30 hover:scale-110 transition-transform shrink-0 flex items-center justify-center relative ml-0.5"
+                style={{ backgroundColor: selectedElement.color || '#00f0ff' }}
+              >
+                <input
+                  type="color"
+                  value={
+                    selectedElement.color && selectedElement.color.startsWith('#') && selectedElement.color.length === 7
+                      ? selectedElement.color
+                      : '#00f0ff'
+                  }
+                  onChange={e => {
+                    const newCol = e.target.value;
+                    setActiveColor?.(newCol);
+                    setElements(prev => {
+                      const next = prev.map(el =>
+                        selectedIds.has(el.id)
+                          ? {
+                              ...el,
+                              color: newCol,
+                              fillColor: el.type === 'shape' ? `${newCol}20` : el.fillColor,
+                              updatedAt: Date.now(),
+                            }
+                          : el
+                      );
+                      elementsRef.current = next;
+                      onElementsChange?.(next);
+                      onHistoryPush?.(next);
+                      return next;
+                    });
+                  }}
+                  className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                />
+              </label>
             )}
 
             {/* Font Size Adjusters for text & sticky */}
