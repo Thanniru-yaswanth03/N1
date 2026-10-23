@@ -132,6 +132,7 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
         strokeWidth: 2,
         content: 'Original Title',
         zIndex: 1,
+        updatedAt: Date.now(),
       };
 
       const originalText = el.content;
@@ -159,6 +160,7 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
         strokeWidth: 2,
         content: 'Old Text',
         zIndex: 1,
+        updatedAt: Date.now(),
       };
 
       const newContent = 'Updated Architecture Diagram Notes';
@@ -184,6 +186,7 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
           strokeWidth: 2,
           content: 'Keep me',
           zIndex: 1,
+          updatedAt: Date.now(),
         },
         {
           id: 'text_empty_abandoned',
@@ -196,6 +199,7 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
           strokeWidth: 2,
           content: '',
           zIndex: 2,
+          updatedAt: Date.now(),
         },
       ];
 
@@ -227,6 +231,7 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
           strokeWidth: 2,
           content: '',
           zIndex: 1,
+          updatedAt: Date.now(),
         },
       ];
 
@@ -268,8 +273,10 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
           width: 200,
           height: 150,
           color: '#00f0ff',
+          strokeWidth: 2,
           content: '',
           zIndex: 1,
+          updatedAt: Date.now(),
         },
       ];
 
@@ -317,7 +324,9 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
         height: 100,
         content: '',
         color: '#00f0ff',
+        strokeWidth: 2,
         zIndex: 1,
+        updatedAt: Date.now(),
       };
 
       const canDirectType = (el: BoardElement) => {
@@ -332,10 +341,10 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
 
     it('cleanly replaces elements on template switch without merging or overlapping old templates', () => {
       const oldMindMapElements: BoardElement[] = [
-        { id: 'node_center', type: 'sticky', x: 200, y: 200, width: 140, height: 70, content: 'Central Topic', color: '#a855f7', strokeWidth: 2, zIndex: 1 },
+        { id: 'node_center', type: 'sticky', x: 200, y: 200, width: 140, height: 70, content: 'Central Topic', color: '#a855f7', strokeWidth: 2, zIndex: 1, updatedAt: Date.now() },
       ];
       const newDbmsElements: BoardElement[] = [
-        { id: 'cylinder_1', type: 'shape', shapeType: 'cylinder', x: 50, y: 50, width: 160, height: 100, content: 'USERS', color: '#38bdf8', strokeWidth: 2, zIndex: 1 },
+        { id: 'cylinder_1', type: 'shape', shapeType: 'cylinder', x: 50, y: 50, width: 160, height: 100, content: 'USERS', color: '#38bdf8', strokeWidth: 2, zIndex: 1, updatedAt: Date.now() },
       ];
 
       // Clean template switch replaces elements
@@ -350,7 +359,7 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
     });
 
     it('deduplicates consecutive identical history states to prevent dead undo clicks', () => {
-      const initial: BoardElement[] = [{ id: 'box_1', type: 'text', x: 10, y: 10, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 1 }];
+      const initial: BoardElement[] = [{ id: 'box_1', type: 'text', x: 10, y: 10, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 1, updatedAt: Date.now() }];
       let history: BoardElement[][] = [[...initial]];
       let historyIndex = 0;
 
@@ -393,7 +402,7 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
     });
 
     it('updates element color when choosing a new custom RGB/hex color', () => {
-      const el: BoardElement = { id: 'text_1', type: 'text', x: 10, y: 10, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 1 };
+      const el: BoardElement = { id: 'text_1', type: 'text', x: 10, y: 10, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 1, updatedAt: Date.now() };
       const customHex = '#FF5500';
 
       const updated = {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BoardShapeType } from '@n1/shared';
 
 export type CanvasTool =
