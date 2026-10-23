@@ -215,18 +215,19 @@ export function DuelResults({
 
         <div className="space-y-3">
           {results.review.map((item, idx) => {
-            const isExpanded = expandedQuestion === item.questionId;
+            const questionKey = `${item.questionId || 'q'}-${idx}`;
+            const isExpanded = expandedQuestion === questionKey;
             const userAnswer = isUserHost ? item.hostAnswer : item.opponentAnswer;
             const isUserCorrect = userAnswer === item.correctOption;
 
             return (
               <div
-                key={item.questionId}
+                key={questionKey}
                 className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5 space-y-4 transition-all"
               >
                 <div
                   className="flex items-start justify-between gap-4 cursor-pointer"
-                  onClick={() => setExpandedQuestion(isExpanded ? null : item.questionId)}
+                  onClick={() => setExpandedQuestion(isExpanded ? null : questionKey)}
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">

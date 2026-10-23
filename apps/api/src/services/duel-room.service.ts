@@ -259,9 +259,9 @@ export class DuelRoomService {
       isDraw = true;
     }
 
-    const review = room.questions.map(q => {
-      const hostAns = host.answers.find(a => a.questionId === q.id);
-      const oppAns = opponent.answers.find(a => a.questionId === q.id);
+    const review = room.questions.map((q, qIdx) => {
+      const hostAns = host.answers.find(a => a.questionId === q.id) || host.answers[qIdx];
+      const oppAns = opponent.answers.find(a => a.questionId === q.id) || opponent.answers[qIdx];
 
       return {
         questionId: q.id,

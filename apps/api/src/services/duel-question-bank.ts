@@ -50,6 +50,29 @@ export const QUESTION_BANK: DuelQuestion[] = [
     correctOption: 1,
     explanation: 'The property builtin creates a descriptor object implementing the descriptor protocol (__get__, __set__, __delete__), allowing method calls to act like attribute access.',
   },
+  {
+    id: 'py-5',
+    category: 'python',
+    difficulty: 'easy',
+    question: 'What is the difference between the "is" and "==" operators in Python?',
+    options: [
+      '"is" compares object identity in memory; "==" compares value equality',
+      '"is" compares values; "==" compares types',
+      'They are exact aliases in Python 3',
+      '"is" only works for primitive numbers and strings',
+    ],
+    correctOption: 0,
+    explanation: '"is" checks whether two variables point to the exact same object in memory (id(a) == id(b)), while "==" checks whether their values are equivalent.',
+  },
+  {
+    id: 'py-6',
+    category: 'python',
+    difficulty: 'medium',
+    question: 'Which built-in Python module is standard for object serialization into byte streams?',
+    options: ['json', 'pickle', 'marshal', 'shelve'],
+    correctOption: 1,
+    explanation: 'The pickle module implements binary protocols for serializing and de-serializing a Python object structure.',
+  },
 
   // ── 2. Java ───────────────────────────────────────────────────────────────
   {
@@ -93,6 +116,48 @@ export const QUESTION_BANK: DuelQuestion[] = [
     ],
     correctOption: 1,
     explanation: 'The volatile keyword in Java guarantees memory visibility (reads and writes go directly to main memory) and establishes a happens-before relationship preventing compiler/hardware reordering.',
+  },
+  {
+    id: 'java-4',
+    category: 'java',
+    difficulty: 'easy',
+    question: 'In Java memory architecture, where are local primitive variables inside a method allocated?',
+    options: [
+      'JVM Thread Stack',
+      'Metaspace',
+      'Young Generation Eden Heap',
+      'Old Generation Tenured Heap',
+    ],
+    correctOption: 0,
+    explanation: 'Local primitive variables and object reference variables declared inside a method are allocated directly on that thread\'s stack frame.',
+  },
+  {
+    id: 'java-5',
+    category: 'java',
+    difficulty: 'medium',
+    question: 'What interface must a resource class implement to be used within a Java try-with-resources statement?',
+    options: [
+      'java.lang.Runnable',
+      'java.lang.AutoCloseable',
+      'java.io.Serializable',
+      'java.lang.Cloneable',
+    ],
+    correctOption: 1,
+    explanation: 'Any resource handled by try-with-resources must implement java.lang.AutoCloseable (or java.io.Closeable), guaranteeing its close() method is called automatically.',
+  },
+  {
+    id: 'java-6',
+    category: 'java',
+    difficulty: 'hard',
+    question: 'Which concurrent collection is optimized for scenarios with frequent reads and infrequent writes without explicit locking?',
+    options: [
+      'Vector',
+      'Collections.synchronizedList(new ArrayList<>())',
+      'CopyOnWriteArrayList',
+      'Hashtable',
+    ],
+    correctOption: 2,
+    explanation: 'CopyOnWriteArrayList creates an immutable snapshot of the underlying array on every modification, allowing multiple threads to read concurrently without locking.',
   },
 
   // ── 3. JavaScript ─────────────────────────────────────────────────────────
@@ -139,6 +204,34 @@ export const QUESTION_BANK: DuelQuestion[] = [
     correctOption: 1,
     explanation: 'Object.create(null) creates a clean dictionary object that does not inherit properties like toString, hasOwnProperty, or constructor from Object.prototype.',
   },
+  {
+    id: 'js-5',
+    category: 'javascript',
+    difficulty: 'easy',
+    question: 'What does Array.prototype.map() return in JavaScript?',
+    options: [
+      'The original array mutated in-place',
+      'A new array containing the results of invoking the callback on every element',
+      'A boolean flag indicating if all elements satisfied the predicate',
+      'An iterator of array index pairs',
+    ],
+    correctOption: 1,
+    explanation: 'Array.prototype.map() constructs and returns a new array without mutating the original input array.',
+  },
+  {
+    id: 'js-6',
+    category: 'javascript',
+    difficulty: 'hard',
+    question: 'What is the primary distinguishing behavior of a JavaScript WeakMap?',
+    options: [
+      'WeakMap only allows primitive numbers as keys',
+      'Keys must be objects (or unregistered symbols) held weakly, allowing garbage collection when unreferenced elsewhere',
+      'WeakMap maintains strict insertion order iteration',
+      'WeakMap automatically syncs across worker threads',
+    ],
+    correctOption: 1,
+    explanation: 'In a WeakMap, keys must be non-primitive objects held as weak references, meaning they do not prevent garbage collection if no other references exist.',
+  },
 
   // ── 4. SQL ────────────────────────────────────────────────────────────────
   {
@@ -182,6 +275,29 @@ export const QUESTION_BANK: DuelQuestion[] = [
     ],
     correctOption: 2,
     explanation: 'Serializable isolation is the highest isolation level that prevents dirty reads, non-repeatable reads, and phantom reads through range locks or serial execution.',
+  },
+  {
+    id: 'sql-4',
+    category: 'sql',
+    difficulty: 'easy',
+    question: 'Which SQL JOIN type returns all records from both tables, filling in NULL where matches do not exist?',
+    options: ['INNER JOIN', 'CROSS JOIN', 'FULL OUTER JOIN', 'LEFT JOIN'],
+    correctOption: 2,
+    explanation: 'FULL OUTER JOIN combines the results of both LEFT and RIGHT joins, filling in NULL for missing values on either side.',
+  },
+  {
+    id: 'sql-5',
+    category: 'sql',
+    difficulty: 'medium',
+    question: 'What is the primary function of the SQL COALESCE() function?',
+    options: [
+      'Converts column strings to lowercase',
+      'Returns the first non-null expression from its argument list',
+      'Concatenates rows into a comma-delimited string',
+      'Calculates running totals across a partition',
+    ],
+    correctOption: 1,
+    explanation: 'COALESCE(val1, val2, ...) evaluates arguments in sequential order and returns the first argument that is not NULL.',
   },
 
   // ── 5. Debugging ──────────────────────────────────────────────────────────
@@ -230,6 +346,34 @@ export const QUESTION_BANK: DuelQuestion[] = [
     correctOption: 1,
     explanation: 'When Python parses a function, any variable assigned to (e.g. x += 1) is classified as local to the entire function scope, causing the earlier print(x) to fail with UnboundLocalError.',
   },
+  {
+    id: 'dbg-4',
+    category: 'debugging',
+    difficulty: 'easy',
+    question: 'What is the most common cause of a "RangeError: Maximum call stack size exceeded" in JavaScript?',
+    options: [
+      'Allocating a string exceeding memory limits',
+      'Unbounded recursion where a function calls itself without hitting a valid termination base case',
+      'Attempting to parse invalid JSON',
+      'Running too many Web Workers at once',
+    ],
+    correctOption: 1,
+    explanation: 'Infinite or runaway recursion consumes all available stack frames in the engine, resulting in a maximum call stack error.',
+  },
+  {
+    id: 'dbg-5',
+    category: 'debugging',
+    difficulty: 'medium',
+    question: 'In Git, what command helps you find and recover a deleted commit or branch that was lost after git reset --hard?',
+    options: [
+      'git fsck --lost-found',
+      'git reflog',
+      'git stash list',
+      'git branch --recover',
+    ],
+    correctOption: 1,
+    explanation: 'git reflog tracks every HEAD movement, enabling developers to discover and check out the SHA of recently deleted commits or detached states.',
+  },
 
   // ── 6. Aptitude ───────────────────────────────────────────────────────────
   {
@@ -258,6 +402,24 @@ export const QUESTION_BANK: DuelQuestion[] = [
     options: ['1/6', '1/9', '5/36', '7/36'],
     correctOption: 0,
     explanation: 'Total outcomes = 36. Outcomes with sum > 9: Sum 10 (4,6; 5,5; 6,4 = 3), Sum 11 (5,6; 6,5 = 2), Sum 12 (6,6 = 1). Total favorable = 3 + 2 + 1 = 6. Probability = 6/36 = 1/6.',
+  },
+  {
+    id: 'apt-4',
+    category: 'aptitude',
+    difficulty: 'easy',
+    question: 'If an article is bought for $80 and sold for $100, what is the profit percentage?',
+    options: ['20%', '25%', '15%', '30%'],
+    correctOption: 1,
+    explanation: 'Profit = $100 - $80 = $20. Profit percentage = (20 / 80) * 100 = 25%.',
+  },
+  {
+    id: 'apt-5',
+    category: 'aptitude',
+    difficulty: 'medium',
+    question: 'What is 15% of 240?',
+    options: ['32', '36', '40', '42'],
+    correctOption: 1,
+    explanation: '10% of 240 = 24. 5% of 240 = 12. 15% = 24 + 12 = 36.',
   },
 
   // ── 7. Logical Reasoning ──────────────────────────────────────────────────
@@ -293,6 +455,24 @@ export const QUESTION_BANK: DuelQuestion[] = [
     correctOption: 1,
     explanation: '"The only son of my grandfather" is John\'s father. The daughter of John\'s father is John\'s sister. Therefore, John is her brother.',
   },
+  {
+    id: 'log-4',
+    category: 'logical-reasoning',
+    difficulty: 'easy',
+    question: 'If CAT is coded as 3120 in an alphabetical cipher, how is DOG coded?',
+    options: ['4157', '4158', '3147', '4167'],
+    correctOption: 0,
+    explanation: 'Each letter is replaced by its 1-indexed alphabetical position: D=4, O=15, G=7 -> 4157.',
+  },
+  {
+    id: 'log-5',
+    category: 'logical-reasoning',
+    difficulty: 'medium',
+    question: 'Look at this series: 7, 10, 8, 11, 9, 12, ... What number should come next?',
+    options: ['7', '10', '12', '13'],
+    correctOption: 1,
+    explanation: 'This is an alternating addition and subtraction series: +3, -2, +3, -2, +3, -2. 12 - 2 = 10.',
+  },
 
   // ── 8. Technical Trivia ───────────────────────────────────────────────────
   {
@@ -326,6 +506,29 @@ export const QUESTION_BANK: DuelQuestion[] = [
     ],
     correctOption: 1,
     explanation: 'In the TCP 3-way handshake (SYN, SYN-ACK, ACK), SYN-ACK confirms receipt of client sequence number and introduces server starting sequence number.',
+  },
+  {
+    id: 'triv-4',
+    category: 'technical-trivia',
+    difficulty: 'easy',
+    question: 'What does DNS stand for in computer networking?',
+    options: [
+      'Data Network System',
+      'Domain Name System',
+      'Distributed Node Server',
+      'Dynamic Network Service',
+    ],
+    correctOption: 1,
+    explanation: 'DNS stands for Domain Name System, which translates human-friendly domain names to IP addresses.',
+  },
+  {
+    id: 'triv-5',
+    category: 'technical-trivia',
+    difficulty: 'medium',
+    question: 'Which company originally created and open-sourced the TypeScript language in 2012?',
+    options: ['Google', 'Microsoft', 'Meta', 'Mozilla'],
+    correctOption: 1,
+    explanation: 'Microsoft introduced TypeScript in October 2012, lead-architected by Anders Hejlsberg.',
   },
 
   // ── 9. CS Fundamentals ────────────────────────────────────────────────────
@@ -361,6 +564,24 @@ export const QUESTION_BANK: DuelQuestion[] = [
     correctOption: 1,
     explanation: 'A process is an isolated execution environment with its own virtual memory space, whereas threads within a process share the heap, data, and code segments.',
   },
+  {
+    id: 'cs-4',
+    category: 'cs-fundamentals',
+    difficulty: 'easy',
+    question: 'Which fundamental data structure operates strictly on a First-In, First-Out (FIFO) basis?',
+    options: ['Stack', 'Queue', 'Heap', 'Trie'],
+    correctOption: 1,
+    explanation: 'A Queue processes items in the exact sequential order they arrive (FIFO), while a Stack is LIFO.',
+  },
+  {
+    id: 'cs-5',
+    category: 'cs-fundamentals',
+    difficulty: 'medium',
+    question: 'What is the maximum number of nodes in a full binary tree of height h (where root has height 0)?',
+    options: ['2^h', '2^(h+1) - 1', '2*h', 'h^2'],
+    correctOption: 1,
+    explanation: 'A complete binary tree has 1 + 2 + 4 + ... + 2^h = 2^(h+1) - 1 total nodes.',
+  },
 
   // ── 10. Brain Puzzles ─────────────────────────────────────────────────────
   {
@@ -394,6 +615,24 @@ export const QUESTION_BANK: DuelQuestion[] = [
     options: ['1 weighing', '2 weighings', '3 weighings', '4 weighings'],
     correctOption: 1,
     explanation: 'Weigh 3 coins against 3 coins. If they balance, weigh the remaining 2 coins (2nd weighing). If one group is heavier, weigh 1 against 1 of that group (2nd weighing). Exactly 2 weighings guaranteed.',
+  },
+  {
+    id: 'puz-4',
+    category: 'brain-puzzles',
+    difficulty: 'easy',
+    question: 'I speak without a mouth and hear without ears. I have no body, but I come alive with wind. What am I?',
+    options: ['A kite', 'An echo', 'A whistle', 'A cloud'],
+    correctOption: 1,
+    explanation: 'An echo responds to sounds without having physical ears or a mouth.',
+  },
+  {
+    id: 'puz-5',
+    category: 'brain-puzzles',
+    difficulty: 'medium',
+    question: 'Forward I am heavy, but backward I am not. What am I?',
+    options: ['The word "ton"', 'An anchor', 'A boat', 'A lead weight'],
+    correctOption: 0,
+    explanation: 'The word "ton" forward is heavy; backward it spells the word "not".',
   },
 ];
 
@@ -434,10 +673,13 @@ export function sampleDuelQuestions(
   }
 
   const result: DuelQuestion[] = [];
+  let instanceCount = 0;
   while (result.length < count && shuffled.length > 0) {
     for (const item of shuffled) {
       if (result.length >= count) break;
-      result.push(item);
+      instanceCount++;
+      const isDuplicate = result.some(r => r.id === item.id);
+      result.push(isDuplicate ? { ...item, id: `${item.id}-dup${instanceCount}` } : { ...item });
     }
   }
 
