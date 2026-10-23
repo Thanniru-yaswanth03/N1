@@ -19,6 +19,7 @@ import {
 import { formatBytes } from '../../../lib/utils';
 import { submitAbuseReport } from '../../../lib/admin-client';
 import { ExpiryUrgencyCard } from '../../../components/drop/ExpiryUrgencyCard';
+import { apiClient } from '../../../lib/api-client';
 
 interface PublicFileMeta {
   id: string;
@@ -275,14 +276,24 @@ export default function ViewDropPage() {
     if (inline) params.set('inline', 'true');
     if (unlockToken) params.set('token', unlockToken);
     const queryString = params.toString();
-    return `${file.downloadUrl}${queryString ? `?${queryString}` : ''}`;
+    const rawUrl = file.downloadUrl;
+    const base = apiClient.getApiBaseUrl();
+    const fullUrl = rawUrl.startsWith('http')
+      ? rawUrl
+      : `${base}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
+    return `${fullUrl}${queryString ? `?${queryString}` : ''}`;
   };
 
   const getZipUrl = (): string => {
     if (!drop?.downloadZipUrl) return '';
+    const rawUrl = drop.downloadZipUrl;
+    const base = apiClient.getApiBaseUrl();
+    const fullUrl = rawUrl.startsWith('http')
+      ? rawUrl
+      : `${base}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
     return unlockToken
-      ? `${drop.downloadZipUrl}?token=${encodeURIComponent(unlockToken)}`
-      : drop.downloadZipUrl;
+      ? `${fullUrl}?token=${encodeURIComponent(unlockToken)}`
+      : fullUrl;
   };
 
   // Determine preview capability by file extension

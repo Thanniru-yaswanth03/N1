@@ -61,6 +61,39 @@ export function BoardCanvas({
   const [currentPoints, setCurrentPoints] = useState<BoardPoint[]>([]);
   const [drawStart, setDrawStart] = useState<BoardPoint>({ x: 0, y: 0 });
 
+  // Area Eraser Box
+  const [isAreaErasing, setIsAreaErasing] = useState(false);
+  const [areaEraseBox, setAreaEraseBox] = useState<{ start: BoardPoint; current: BoardPoint } | null>(null);
+
+  // Check if an element intersects a rectangular bounding box
+  const isElementInBox = useCallback((
+    el: BoardElement,
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number
+  ): boolean => {
+    if (el.type === 'stroke' && el.points && el.points.length > 0) {
+      for (const p of el.points) {
+        const px = el.x + p.x;
+        const py = el.y + p.y;
+        if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+          return true;
+        }
+      }
+      return el.x >= minX && el.x <= maxX && el.y >= minY && el.y <= maxY;
+    } else {
+      const w = el.width || 40;
+      const h = el.height || 40;
+      return (
+        el.x <= maxX &&
+        el.x + w >= minX &&
+        el.y <= maxY &&
+        el.y + h >= minY
+      );
+    }
+  }, []);
+
   // Convert screen coordinates to canvas world coordinates
   const screenToWorld = useCallback(
     (screenX: number, screenY: number): BoardPoint => {
@@ -443,6 +476,41 @@ export function BoardCanvas({
       ctx.restore();
     }
 
+    // Render in-progress area eraser marquee box
+    if (isAreaErasing && areaEraseBox) {
+      const bx = Math.min(areaEraseBox.start.x, areaEraseBox.current.x);
+      const by = Math.min(areaEraseBox.start.y, areaEraseBox.current.y);
+      const bw = Math.abs(areaEraseBox.current.x - areaEraseBox.start.x);
+      const bh = Math.abs(areaEraseBox.current.y - areaEraseBox.start.y);
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(244, 63, 94, 0.18)';
+      ctx.fillRect(bx, by, bw, bh);
+
+      ctx.strokeStyle = '#f43f5e';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.setLineDash([6 / zoom, 4 / zoom]);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.setLineDash([]);
+
+      const toDeleteCount = elements.filter(el => isElementInBox(el, bx, by, bx + bw, by + bh)).length;
+      if (toDeleteCount > 0 && (bw > 15 || bh > 15)) {
+        ctx.fillStyle = '#f43f5e';
+        const label = `🗑️ Delete ${toDeleteCount} ${toDeleteCount === 1 ? 'item' : 'items'}`;
+        ctx.font = 'bold 11px sans-serif';
+        const textWidth = ctx.measureText(label).width;
+        const tagX = bx + bw - textWidth - 14;
+        const tagY = by + bh + 4;
+        ctx.beginPath();
+        ctx.roundRect(tagX, tagY, textWidth + 14, 20, 4);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, tagX + 7, tagY + 14);
+      }
+      ctx.restore();
+    }
+
     // Render online peer cursors
     peerUsers.forEach(peer => {
       if (peer.cursor) {
@@ -486,6 +554,9 @@ export function BoardCanvas({
     activeTool,
     strokeWidth,
     peerUsers,
+    isAreaErasing,
+    areaEraseBox,
+    isElementInBox,
   ]);
 
   // Request Animation Frame Render Loop
@@ -595,17 +666,10 @@ export function BoardCanvas({
       return;
     }
 
-    // Eraser mode
+    // Eraser mode (Supports single-click tap delete & drag box area delete)
     if (activeTool === 'eraser') {
-      const hit = findElementAt(world);
-      if (hit) {
-        setElements(prev => {
-          const next = prev.filter(el => el.id !== hit.id);
-          onElementsChange?.(next);
-          onHistoryPush?.(next);
-          return next;
-        });
-      }
+      setIsAreaErasing(true);
+      setAreaEraseBox({ start: world, current: world });
       return;
     }
 
@@ -705,6 +769,11 @@ export function BoardCanvas({
       return;
     }
 
+    if (isAreaErasing && areaEraseBox) {
+      setAreaEraseBox(prev => (prev ? { start: prev.start, current: world } : null));
+      return;
+    }
+
     if (isDraggingElement && selectedId) {
       setElements(prev =>
         prev.map(el => {
@@ -746,6 +815,40 @@ export function BoardCanvas({
 
     if (isPanning) {
       setIsPanning(false);
+      return;
+    }
+
+    if (isAreaErasing && areaEraseBox) {
+      setIsAreaErasing(false);
+      const minX = Math.min(areaEraseBox.start.x, areaEraseBox.current.x);
+      const maxX = Math.max(areaEraseBox.start.x, areaEraseBox.current.x);
+      const minY = Math.min(areaEraseBox.start.y, areaEraseBox.current.y);
+      const maxY = Math.max(areaEraseBox.start.y, areaEraseBox.current.y);
+      const boxW = maxX - minX;
+      const boxH = maxY - minY;
+      setAreaEraseBox(null);
+
+      // If dragged area > 8px, delete all intersecting elements (text, sticky notes, shapes, strokes)
+      if (boxW > 8 || boxH > 8) {
+        const toDelete = elements.filter(el => isElementInBox(el, minX, minY, maxX, maxY));
+        if (toDelete.length > 0) {
+          const deleteIds = new Set(toDelete.map(el => el.id));
+          const next = elements.filter(el => !deleteIds.has(el.id));
+          setElements(next);
+          onElementsChange?.(next);
+          onHistoryPush?.(next);
+        }
+      } else {
+        // Single click erase
+        const world = screenToWorld(e.clientX, e.clientY);
+        const hit = findElementAt(world);
+        if (hit) {
+          const next = elements.filter(el => el.id !== hit.id);
+          setElements(next);
+          onElementsChange?.(next);
+          onHistoryPush?.(next);
+        }
+      }
       return;
     }
 
@@ -913,6 +1016,47 @@ export function BoardCanvas({
       }`}
     >
       <canvas ref={canvasRef} className="block w-full h-full" style={{ touchAction: 'none' }} />
+
+      {/* Floating Eraser Area Delete Helper Banner */}
+      {activeTool === 'eraser' && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="px-3.5 py-1.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-semibold backdrop-blur-md flex items-center gap-2 shadow-lg">
+            <span>🗑️ Area Eraser</span>
+            <span className="text-[11px] text-zinc-400 font-normal hidden sm:inline">
+              • Click or drag a box across any text or diagram to delete (Undo with Ctrl+Z)
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Selected Element Action Pill (Great for Mobile & Quick Delete) */}
+      {selectedId && !isDraggingElement && !editingId && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="px-3.5 py-1.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-semibold backdrop-blur-md flex items-center gap-2.5 shadow-lg">
+            <span>1 element selected</span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = elements.filter(el => el.id !== selectedId);
+                setElements(next);
+                onElementsChange?.(next);
+                onHistoryPush?.(next);
+                setSelectedId(null);
+              }}
+              className="px-2.5 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold transition-colors cursor-pointer"
+            >
+              🗑️ Delete (Del)
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedId(null)}
+              className="text-zinc-400 hover:text-white text-xs cursor-pointer"
+            >
+              ✕ Deselect
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Empty State Onboarding Overlay */}
       {elements.length === 0 && !isDrawing && (

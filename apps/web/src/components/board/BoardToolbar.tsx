@@ -326,16 +326,16 @@ export function BoardToolbar({
 
           {/* Group 5: Eraser & Style */}
           <div className="flex items-center gap-0.5">
-            {/* Eraser */}
+            {/* Eraser / Area Delete */}
             <button
               type="button"
               onClick={() => setActiveTool('eraser')}
-              title="Eraser (E)"
-              aria-label="Eraser tool"
+              title="Eraser & Area Delete (E) — Click item or drag a box across text & diagrams to delete"
+              aria-label="Eraser & Area Delete tool"
               aria-pressed={activeTool === 'eraser'}
-              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${
+              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer ${
                 activeTool === 'eraser'
-                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-500/20'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
               }`}
             >
