@@ -9,6 +9,7 @@ import {
   ConnectedBoardUser,
   BoardSocketClientMessage,
   BoardSocketServerMessage,
+  BoardChatMessage,
 } from '@n1/shared';
 
 const ANONYMOUS_NAMES = [
@@ -49,6 +50,7 @@ interface ClientSession {
   isAlive: boolean;
   messageCount: number;
   windowStart: number;
+  handRaised?: boolean;
 }
 
 interface SessionWebSocket extends WebSocket {
@@ -61,6 +63,7 @@ export class BoardWebSocketManager {
   private roomPermissions = new Map<string, boolean>();
   private roomAdmins = new Map<string, Set<string>>();
   private roomPresenters = new Map<string, string | null>();
+  private roomMessages = new Map<string, BoardChatMessage[]>();
   private saveDebounceTimers = new Map<string, NodeJS.Timeout>();
   private pendingElements = new Map<string, BoardElement[]>();
 
@@ -255,6 +258,7 @@ export class BoardWebSocketManager {
       role: session.role,
       isOwner: session.isCreator,
       isPresenter: currentPresenter === session.userId,
+      handRaised: Boolean(session.handRaised),
     };
 
     const activeUsers: ConnectedBoardUser[] = Array.from(clients).map(c => ({
@@ -264,6 +268,7 @@ export class BoardWebSocketManager {
       role: c.role,
       isOwner: c.isCreator,
       isPresenter: currentPresenter === c.userId,
+      handRaised: Boolean(c.handRaised),
     }));
 
     // Send full room state to the newly joined client
@@ -287,6 +292,7 @@ export class BoardWebSocketManager {
       role: session.role,
       allowParticipantEditing: this.roomPermissions.get(roomCode) ?? true,
       presenterUserId: currentPresenter,
+      recentMessages: this.roomMessages.get(roomCode) || [],
     });
 
     // Notify other peers in this room
@@ -319,6 +325,7 @@ export class BoardWebSocketManager {
         this.roomPermissions.delete(roomCode);
         this.roomAdmins.delete(roomCode);
         this.roomPresenters.delete(roomCode);
+        this.roomMessages.delete(roomCode);
         // Flush any pending elements to database
         this.flushPendingElements(roomCode);
       } else {
@@ -459,6 +466,174 @@ export class BoardWebSocketManager {
           userName: session.userName,
           action: `revoked admin access for ${target.userName}`,
           timestamp: Date.now(),
+        });
+        break;
+      }
+
+      case 'KICK_USER': {
+        if (!roomCode) return;
+        const isAdmin = session.role === 'admin' || session.isCreator;
+        if (!isAdmin) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Only a Room Admin or Creator can remove participants.',
+          });
+          return;
+        }
+
+        const clients = this.roomClients.get(roomCode);
+        const target = Array.from(clients || []).find(c => c.userId === msg.targetUserId);
+        if (!target) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'User is no longer in this study room.',
+          });
+          return;
+        }
+
+        if (target.userId === session.userId) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'You cannot kick yourself from the room.',
+          });
+          return;
+        }
+
+        if (target.isCreator) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'The room creator cannot be kicked from the room.',
+          });
+          return;
+        }
+
+        if (target.role === 'admin' && !session.isCreator) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Only the Room Creator can kick another Room Admin.',
+          });
+          return;
+        }
+
+        const reason = msg.reason || 'You have been removed from this study session by an admin.';
+
+        // Notify target directly
+        this.send(target.ws, {
+          type: 'KICKED',
+          reason,
+        });
+
+        // Broadcast to everyone that the user was kicked
+        this.broadcastToRoom(roomCode, {
+          type: 'USER_KICKED',
+          userId: target.userId,
+          userName: target.userName,
+          reason,
+        });
+
+        this.broadcastToRoom(roomCode, {
+          type: 'ACTIVITY_INDICATOR',
+          userId: session.userId,
+          userName: session.userName,
+          action: `removed ${target.userName} from the study session`,
+          timestamp: Date.now(),
+        });
+
+        try {
+          target.ws.close(4003, 'Kicked by admin');
+        } catch {
+          // ignore
+        }
+        this.leaveRoom(target);
+        break;
+      }
+
+      case 'CHAT_MESSAGE': {
+        if (!roomCode) return;
+        const trimmed = msg.text?.trim();
+        if (!trimmed) return;
+
+        const chatMessage: BoardChatMessage = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          userId: session.userId,
+          userName: session.userName,
+          userColor: session.userColor,
+          role: session.role,
+          isOwner: session.isCreator,
+          text: trimmed,
+          timestamp: Date.now(),
+        };
+
+        if (!this.roomMessages.has(roomCode)) {
+          this.roomMessages.set(roomCode, []);
+        }
+        const buffer = this.roomMessages.get(roomCode)!;
+        buffer.push(chatMessage);
+        if (buffer.length > 60) {
+          buffer.shift();
+        }
+
+        // Broadcast to entire room including sender
+        this.broadcastToRoom(roomCode, {
+          type: 'CHAT_BROADCAST',
+          message: chatMessage,
+        });
+        break;
+      }
+
+      case 'RAISE_HAND': {
+        if (!roomCode) return;
+        session.handRaised = Boolean(msg.raised);
+
+        this.broadcastToRoom(roomCode, {
+          type: 'HAND_STATE',
+          userId: session.userId,
+          userName: session.userName,
+          handRaised: session.handRaised,
+        });
+
+        if (session.handRaised) {
+          this.broadcastToRoom(roomCode, {
+            type: 'ACTIVITY_INDICATOR',
+            userId: session.userId,
+            userName: session.userName,
+            action: `raised their hand ✋`,
+            timestamp: Date.now(),
+          });
+        }
+        break;
+      }
+
+      case 'LOWER_HAND': {
+        if (!roomCode) return;
+        let targetUser = session;
+        if (msg.targetUserId && (session.role === 'admin' || session.isCreator)) {
+          const clients = this.roomClients.get(roomCode);
+          const found = Array.from(clients || []).find(c => c.userId === msg.targetUserId);
+          if (found) {
+            targetUser = found;
+          }
+        }
+
+        targetUser.handRaised = false;
+        this.broadcastToRoom(roomCode, {
+          type: 'HAND_STATE',
+          userId: targetUser.userId,
+          userName: targetUser.userName,
+          handRaised: false,
+        });
+        break;
+      }
+
+      case 'SEND_REACTION': {
+        if (!roomCode) return;
+        const emoji = msg.emoji?.trim() || '👍';
+        this.broadcastToRoom(roomCode, {
+          type: 'REACTION_BURST',
+          id: `rx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          userId: session.userId,
+          userName: session.userName,
+          emoji,
         });
         break;
       }

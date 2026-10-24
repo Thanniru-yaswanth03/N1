@@ -128,6 +128,27 @@ export const boardSocketClientMessageSchema = z.discriminatedUnion('type', [
     targetUserId: z.string().min(1).max(100),
   }),
   z.object({
+    type: z.literal('KICK_USER'),
+    targetUserId: z.string().min(1).max(100),
+    reason: z.string().max(200).optional(),
+  }),
+  z.object({
+    type: z.literal('CHAT_MESSAGE'),
+    text: z.string().trim().min(1, 'Message cannot be empty').max(1000, 'Message cannot exceed 1000 characters'),
+  }),
+  z.object({
+    type: z.literal('RAISE_HAND'),
+    raised: z.boolean(),
+  }),
+  z.object({
+    type: z.literal('LOWER_HAND'),
+    targetUserId: z.string().min(1).max(100).optional(),
+  }),
+  z.object({
+    type: z.literal('SEND_REACTION'),
+    emoji: z.string().min(1).max(20),
+  }),
+  z.object({
     type: z.literal('START_PRESENTING'),
   }),
   z.object({

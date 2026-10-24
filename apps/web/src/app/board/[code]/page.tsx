@@ -8,6 +8,7 @@ import {
   BoardShapeType,
   BoardTemplate,
   ConnectedBoardUser,
+  BoardChatMessage,
   getTemplateElements,
 } from '@n1/shared';
 import {
@@ -28,6 +29,8 @@ import { BoardCanvas, RemoteLiveStroke } from '../../../components/board/BoardCa
 import { BoardToolbar, CanvasTool } from '../../../components/board/BoardToolbar';
 import { BoardHeader } from '../../../components/board/BoardHeader';
 import { ShareModal } from '../../../components/board/ShareModal';
+import { BoardChatDrawer } from '../../../components/board/BoardChatDrawer';
+import { ReactionOverlay, FloatingReactionItem } from '../../../components/board/ReactionOverlay';
 import { Button } from '../../../components/ui/Button';
 
 export default function StudyBoardRoomPage() {
@@ -80,8 +83,22 @@ export default function StudyBoardRoomPage() {
   const [currentUser, setCurrentUser] = useState<ConnectedBoardUser | null>(null);
   const socketRef = useRef<ReturnType<typeof connectBoardSocket> | null>(null);
 
-  // Modals
+  // Modals & Classroom Interactive Panels
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<BoardChatMessage[]>([]);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const chatOpenRef = useRef(chatOpen);
+  useEffect(() => {
+    chatOpenRef.current = chatOpen;
+  }, [chatOpen]);
+
+  // Raise hand & Reactions state
+  const [handRaised, setHandRaised] = useState<boolean>(false);
+  const [floatingReactions, setFloatingReactions] = useState<FloatingReactionItem[]>([]);
+
+  // Kicked modal notification
+  const [kickedModalReason, setKickedModalReason] = useState<string | null>(null);
 
   // Auto-focus on Admin activity (drawings, notes, edits)
   const [autoFocusEnabled, setAutoFocusEnabled] = useState<boolean>(true);
@@ -167,7 +184,7 @@ export default function StudyBoardRoomPage() {
     if (!roomCode || isExpired || loading) return;
 
     const socket = connectBoardSocket(roomCode, {
-      onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing, role, presenterId) => {
+      onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing, role, presenterId, recentMessages) => {
         setElements(prev => {
           if (prev.length === 0) return initialElements;
           // Smart reconciliation: never wipe local work if server state is empty or stale on reconnect
@@ -207,6 +224,12 @@ export default function StudyBoardRoomPage() {
         }
         if (presenterId !== undefined) {
           setPresenterUserId(presenterId);
+        }
+        if (recentMessages && recentMessages.length > 0) {
+          setChatMessages(recentMessages);
+        }
+        if (me?.handRaised) {
+          setHandRaised(true);
         }
       },
       onUserJoined: user => {
@@ -348,6 +371,47 @@ export default function StudyBoardRoomPage() {
           if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
           activityTimerRef.current = setTimeout(() => setRecentActivity(null), 5000);
         }
+      },
+      onChatMessage: msg => {
+        setChatMessages(prev => [...prev, msg]);
+        if (!chatOpenRef.current) {
+          setUnreadMessageCount(c => c + 1);
+        }
+      },
+      onHandState: state => {
+        setPeerUsers(prev =>
+          prev.map(u => (u.id === state.userId ? { ...u, handRaised: state.handRaised } : u))
+        );
+        if (currentUserRef.current?.id === state.userId) {
+          setHandRaised(state.handRaised);
+        }
+      },
+      onReactionBurst: rx => {
+        const xPercent = 15 + Math.floor(Math.random() * 70);
+        const item: FloatingReactionItem = {
+          id: rx.id,
+          emoji: rx.emoji,
+          userName: rx.userName,
+          xPercent,
+        };
+        setFloatingReactions(prev => [...prev, item]);
+        setTimeout(() => {
+          setFloatingReactions(prev => prev.filter(r => r.id !== rx.id));
+        }, 2700);
+      },
+      onUserKicked: evt => {
+        setPeerUsers(prev => prev.filter(u => u.id !== evt.userId));
+        setRecentActivity({
+          userName: 'System',
+          action: `${evt.userName} was removed from the study room`,
+          timestamp: Date.now(),
+        });
+        if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+        activityTimerRef.current = setTimeout(() => setRecentActivity(null), 5000);
+      },
+      onKicked: reason => {
+        setKickedModalReason(reason || 'You have been removed from this study session by an admin.');
+        socketRef.current?.disconnect();
       },
       onPresentationState: state => {
         setPresenterUserId(state.presenterUserId);
@@ -599,6 +663,33 @@ export default function StudyBoardRoomPage() {
     socketRef.current?.sendRevokeAdmin(userId);
   }, []);
 
+  const handleKickUser = useCallback((userId: string) => {
+    socketRef.current?.sendKickUser(userId);
+  }, []);
+
+  const handleToggleRaiseHand = useCallback(() => {
+    setHandRaised(prev => {
+      const next = !prev;
+      socketRef.current?.sendRaiseHand(next);
+      return next;
+    });
+  }, []);
+
+  const handleLowerHand = useCallback((userId?: string) => {
+    socketRef.current?.sendLowerHand(userId);
+    if (!userId || userId === currentUser?.id) {
+      setHandRaised(false);
+    }
+  }, [currentUser?.id]);
+
+  const handleSendMessage = useCallback((text: string) => {
+    socketRef.current?.sendChatMessage(text);
+  }, []);
+
+  const handleSendReaction = useCallback((emoji: string) => {
+    socketRef.current?.sendReaction(emoji);
+  }, []);
+
   const handleStartPresenting = useCallback(() => {
     socketRef.current?.sendStartPresenting();
   }, []);
@@ -610,6 +701,42 @@ export default function StudyBoardRoomPage() {
   const handleToggleFollowPresenter = useCallback(() => {
     setIsFollowingPresenter(prev => !prev);
   }, []);
+
+  // ── Render Kicked / Removed State ──
+  if (kickedModalReason) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-[#09090f]">
+        <div className="w-full max-w-md p-8 rounded-3xl border border-rose-500/30 bg-[#12121e] text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 text-3xl">
+            🚫
+          </div>
+
+          <div className="space-y-2">
+            <h1 className="text-xl font-bold text-white">Session Terminated</h1>
+            <p className="text-xs text-rose-200/90 leading-relaxed font-medium">
+              {kickedModalReason}
+            </p>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              You were removed from this session by a Room Admin or Creator.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-xl border border-white/5 bg-white/[0.02] font-mono text-xs text-[var(--color-text-muted)]">
+            Room Code: <span className="text-white font-bold">{roomCode}</span>
+          </div>
+
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={() => router.push('/board')}
+            className="w-full justify-center bg-cyan-500 hover:bg-cyan-400 text-black font-bold"
+          >
+            Return to Study Hub →
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // ── Render Expired State ──
   if (isExpired) {
@@ -700,6 +827,15 @@ export default function StudyBoardRoomPage() {
         onStopPresenting={handleStopPresenting}
         onPromoteUser={handlePromoteUser}
         onRevokeAdmin={handleRevokeAdmin}
+        onKickUser={handleKickUser}
+        onLowerHand={handleLowerHand}
+        onToggleChat={() => {
+          setChatOpen(prev => !prev);
+          setUnreadMessageCount(0);
+        }}
+        unreadMessageCount={unreadMessageCount}
+        handRaised={handRaised}
+        onToggleRaiseHand={handleToggleRaiseHand}
         allowParticipantEditing={allowParticipantEditing}
         onToggleParticipantEditing={handleTogglePermissions}
         recentActivity={recentActivity}
@@ -848,6 +984,21 @@ export default function StudyBoardRoomPage() {
         roomCode={roomCode}
         roomTitle={room?.title || 'Study Session'}
       />
+
+      {/* ── Classroom Chat & Q&A Drawer ── */}
+      <BoardChatDrawer
+        isOpen={chatOpen}
+        onClose={() => setChatOpen(false)}
+        messages={chatMessages}
+        currentUser={currentUser}
+        onSendMessage={handleSendMessage}
+        onSendReaction={handleSendReaction}
+        handRaised={handRaised}
+        onToggleRaiseHand={handleToggleRaiseHand}
+      />
+
+      {/* ── Floating Reaction Bursts ── */}
+      <ReactionOverlay reactions={floatingReactions} />
     </div>
   );
 }

@@ -49,7 +49,8 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
   function waitForMessage(
     ws: WebSocket,
     type: string,
-    timeoutMs: number = 4000
+    timeoutMs: number = 4000,
+    predicate?: (msg: Record<string, any>) => boolean
   ): Promise<Record<string, any>> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -59,7 +60,7 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
       const listener = (data: Buffer | string) => {
         try {
           const parsed = JSON.parse(data.toString());
-          if (parsed.type === type) {
+          if (parsed.type === type && (!predicate || predicate(parsed))) {
             clearTimeout(timer);
             ws.off('message', listener);
             resolve(parsed);
@@ -738,5 +739,158 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
 
     const pong = await pongPromise;
     expect(pong.type).toBe('PONG');
+  });
+
+  it('broadcasts chat messages to participants and includes them in room state history', async () => {
+    const room = await boardRoomService.createRoom({ title: 'ChatTest Room', template: 'blank' });
+
+    // Client 1 (Teacher)
+    const wsTeacher = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsTeacher);
+    await new Promise<void>(resolve => wsTeacher.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsTeacher.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Teacher', creatorToken: room.creatorToken }));
+      wsTeacher.once('message', () => resolve());
+    });
+
+    // Client 2 (Student)
+    const wsStudent = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsStudent);
+    await new Promise<void>(resolve => wsStudent.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsStudent.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Student_Bob' }));
+      wsStudent.once('message', () => resolve());
+    });
+
+    // Student sends chat message
+    const chatPromise = waitForMessage(wsTeacher, 'CHAT_BROADCAST');
+    wsStudent.send(JSON.stringify({ type: 'CHAT_MESSAGE', text: 'Hello Teacher, is this on the exam?' }));
+
+    const chatEvent = await chatPromise;
+    expect(chatEvent.message.text).toBe('Hello Teacher, is this on the exam?');
+    expect(chatEvent.message.userName).toBe('Student_Bob');
+
+    // Client 3 joins late and verifies recentMessages in ROOM_STATE
+    const wsLate = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsLate);
+    await new Promise<void>(resolve => wsLate.on('open', resolve));
+
+    const lateStatePromise = waitForMessage(wsLate, 'ROOM_STATE');
+    wsLate.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Late_Student' }));
+
+    const lateState = await lateStatePromise;
+    expect(lateState.recentMessages).toBeDefined();
+    expect(lateState.recentMessages.some((m: any) => m.text.includes('exam?'))).toBe(true);
+  });
+
+  it('handles raise hand, lower hand, and emoji reaction bursts', async () => {
+    const room = await boardRoomService.createRoom({ title: 'ReactionTest Room', template: 'blank' });
+
+    const wsTeacher = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsTeacher);
+    await new Promise<void>(resolve => wsTeacher.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsTeacher.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Teacher_Sam', creatorToken: room.creatorToken }));
+      wsTeacher.once('message', () => resolve());
+    });
+
+    const wsStudent = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsStudent);
+    await new Promise<void>(resolve => wsStudent.on('open', resolve));
+    let studentId = '';
+    await new Promise<void>(resolve => {
+      wsStudent.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Student_Maya' }));
+      wsStudent.once('message', data => {
+        const parsed = JSON.parse(data.toString());
+        studentId = parsed.currentUser.id;
+        resolve();
+      });
+    });
+
+    // Student raises hand
+    const handUpPromise = waitForMessage(wsTeacher, 'HAND_STATE');
+    wsStudent.send(JSON.stringify({ type: 'RAISE_HAND', raised: true }));
+
+    const handUp = await handUpPromise;
+    expect(handUp.handRaised).toBe(true);
+    expect(handUp.userId).toBe(studentId);
+
+    // Teacher lowers student's hand
+    const handDownPromise = waitForMessage(
+      wsStudent,
+      'HAND_STATE',
+      4000,
+      msg => msg.handRaised === false
+    );
+    wsTeacher.send(JSON.stringify({ type: 'LOWER_HAND', targetUserId: studentId }));
+
+    const handDown = await handDownPromise;
+    expect(handDown.handRaised).toBe(false);
+
+    // Emoji reaction burst
+    const reactionPromise = waitForMessage(wsTeacher, 'REACTION_BURST');
+    wsStudent.send(JSON.stringify({ type: 'SEND_REACTION', emoji: '🎉' }));
+
+    const reaction = await reactionPromise;
+    expect(reaction.emoji).toBe('🎉');
+    expect(reaction.userName).toBe('Student_Maya');
+  });
+
+  it('allows room admin to kick a disruptive participant and protects creator from being kicked', async () => {
+    const room = await boardRoomService.createRoom({ title: 'KickTest Room', template: 'blank' });
+
+    // Admin (Creator)
+    const wsAdmin = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsAdmin);
+    await new Promise<void>(resolve => wsAdmin.on('open', resolve));
+    let adminId = '';
+    await new Promise<void>(resolve => {
+      wsAdmin.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Room_Creator', creatorToken: room.creatorToken }));
+      wsAdmin.once('message', data => {
+        adminId = JSON.parse(data.toString()).currentUser.id;
+        resolve();
+      });
+    });
+
+    // Disruptive participant
+    const wsTroll = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsTroll);
+    await new Promise<void>(resolve => wsTroll.on('open', resolve));
+    let trollId = '';
+    await new Promise<void>(resolve => {
+      wsTroll.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Troll_User' }));
+      wsTroll.once('message', data => {
+        trollId = JSON.parse(data.toString()).currentUser.id;
+        resolve();
+      });
+    });
+
+    // Regular student observer
+    const wsStudent = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsStudent);
+    await new Promise<void>(resolve => wsStudent.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsStudent.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Observer_Student' }));
+      wsStudent.once('message', () => resolve());
+    });
+
+    // Attempt 1: Participant tries to kick admin (should fail with ERROR)
+    const trollKickErrPromise = waitForMessage(wsTroll, 'ERROR');
+    wsTroll.send(JSON.stringify({ type: 'KICK_USER', targetUserId: adminId }));
+    const err = await trollKickErrPromise;
+    expect(err.message).toContain('Only a Room Admin');
+
+    // Attempt 2: Admin kicks disruptive participant
+    const kickedPromise = waitForMessage(wsTroll, 'KICKED');
+    const userKickedPromise = waitForMessage(wsStudent, 'USER_KICKED');
+
+    wsAdmin.send(JSON.stringify({ type: 'KICK_USER', targetUserId: trollId, reason: 'Spamming board' }));
+
+    const kickedEvent = await kickedPromise;
+    expect(kickedEvent.reason).toBe('Spamming board');
+
+    const roomKickedEvent = await userKickedPromise;
+    expect(roomKickedEvent.userId).toBe(trollId);
+    expect(roomKickedEvent.userName).toBe('Troll_User');
   });
 });

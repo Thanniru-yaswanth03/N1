@@ -88,6 +88,17 @@ export interface BoardRoomSummary {
   isExpired: boolean;
 }
 
+export interface BoardChatMessage {
+  id: string;
+  userId: string;
+  userName: string;
+  userColor: string;
+  role: 'admin' | 'participant';
+  isOwner?: boolean;
+  text: string;
+  timestamp: number;
+}
+
 export interface ConnectedBoardUser {
   id: string;
   name: string;
@@ -95,6 +106,7 @@ export interface ConnectedBoardUser {
   role: 'admin' | 'participant';
   isOwner?: boolean;
   isPresenter?: boolean;
+  handRaised?: boolean;
   cursor?: { x: number; y: number };
 }
 
@@ -118,6 +130,11 @@ export type BoardSocketClientMessage =
   | { type: 'TOGGLE_PERMISSIONS'; allowParticipantEditing: boolean }
   | { type: 'PROMOTE_USER'; targetUserId: string }
   | { type: 'REVOKE_ADMIN'; targetUserId: string }
+  | { type: 'KICK_USER'; targetUserId: string; reason?: string }
+  | { type: 'CHAT_MESSAGE'; text: string }
+  | { type: 'RAISE_HAND'; raised: boolean }
+  | { type: 'LOWER_HAND'; targetUserId?: string }
+  | { type: 'SEND_REACTION'; emoji: string }
   | { type: 'START_PRESENTING' }
   | { type: 'STOP_PRESENTING' }
   | { type: 'PING' };
@@ -133,9 +150,15 @@ export type BoardSocketServerMessage =
       role: 'admin' | 'participant';
       allowParticipantEditing: boolean;
       presenterUserId?: string | null;
+      recentMessages?: BoardChatMessage[];
     }
   | { type: 'USER_JOINED'; user: ConnectedBoardUser }
   | { type: 'USER_LEFT'; userId: string }
+  | { type: 'USER_KICKED'; userId: string; userName: string; reason?: string }
+  | { type: 'KICKED'; reason?: string }
+  | { type: 'CHAT_BROADCAST'; message: BoardChatMessage }
+  | { type: 'HAND_STATE'; userId: string; userName: string; handRaised: boolean }
+  | { type: 'REACTION_BURST'; id: string; userId: string; userName: string; emoji: string }
   | {
       type: 'USER_CURSOR';
       userId: string;

@@ -5,6 +5,7 @@ import {
   BoardSocketClientMessage,
   BoardSocketServerMessage,
   ConnectedBoardUser,
+  BoardChatMessage,
 } from '@n1/shared';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -183,7 +184,8 @@ export interface BoardSocketCallbacks {
     isCreator: boolean,
     allowParticipantEditing: boolean,
     role?: 'admin' | 'participant',
-    presenterUserId?: string | null
+    presenterUserId?: string | null,
+    recentMessages?: BoardChatMessage[]
   ) => void;
   onUserJoined: (user: ConnectedBoardUser) => void;
   onUserLeft: (userId: string) => void;
@@ -195,6 +197,11 @@ export interface BoardSocketCallbacks {
   onError: (message: string) => void;
   onConnectionChange: (connected: boolean) => void;
   onConnectionStatusChange?: (status: BoardConnectionStatus) => void;
+  onChatMessage?: (message: BoardChatMessage) => void;
+  onHandState?: (state: { userId: string; userName: string; handRaised: boolean }) => void;
+  onReactionBurst?: (reaction: { id: string; userId: string; userName: string; emoji: string }) => void;
+  onUserKicked?: (event: { userId: string; userName: string; reason?: string }) => void;
+  onKicked?: (reason?: string) => void;
   onLiveDrawChunk?: (chunk: {
     userId: string;
     userName: string;
@@ -253,6 +260,11 @@ export function connectBoardSocket(
   sendTogglePermissions: (allowParticipantEditing: boolean) => void;
   sendPromoteUser: (targetUserId: string) => void;
   sendRevokeAdmin: (targetUserId: string) => void;
+  sendKickUser: (targetUserId: string, reason?: string) => void;
+  sendChatMessage: (text: string) => void;
+  sendRaiseHand: (raised: boolean) => void;
+  sendLowerHand: (targetUserId?: string) => void;
+  sendReaction: (emoji: string) => void;
   sendStartPresenting: () => void;
   sendStopPresenting: () => void;
   disconnect: () => void;
@@ -317,7 +329,8 @@ export function connectBoardSocket(
                 msg.isCreator,
                 msg.allowParticipantEditing,
                 msg.role,
-                msg.presenterUserId
+                msg.presenterUserId,
+                msg.recentMessages
               );
               break;
             case 'USER_JOINED':
@@ -325,6 +338,21 @@ export function connectBoardSocket(
               break;
             case 'USER_LEFT':
               callbacks.onUserLeft(msg.userId);
+              break;
+            case 'USER_KICKED':
+              callbacks.onUserKicked?.(msg);
+              break;
+            case 'KICKED':
+              callbacks.onKicked?.(msg.reason);
+              break;
+            case 'CHAT_BROADCAST':
+              callbacks.onChatMessage?.(msg.message);
+              break;
+            case 'HAND_STATE':
+              callbacks.onHandState?.(msg);
+              break;
+            case 'REACTION_BURST':
+              callbacks.onReactionBurst?.(msg);
               break;
             case 'USER_CURSOR':
               callbacks.onUserCursor(msg.userId, msg.userName, msg.userColor, msg.x, msg.y);
@@ -388,7 +416,7 @@ export function connectBoardSocket(
           return;
         }
 
-        if (event.code !== 4004) {
+        if (event.code !== 4004 && event.code !== 4003) {
           callbacks.onConnectionStatusChange?.('RECONNECTING');
           reconnectTimeout = setTimeout(connect, 2500);
         } else {
@@ -459,6 +487,21 @@ export function connectBoardSocket(
     },
     sendRevokeAdmin: (targetUserId: string) => {
       send({ type: 'REVOKE_ADMIN', targetUserId });
+    },
+    sendKickUser: (targetUserId: string, reason?: string) => {
+      send({ type: 'KICK_USER', targetUserId, reason });
+    },
+    sendChatMessage: (text: string) => {
+      send({ type: 'CHAT_MESSAGE', text });
+    },
+    sendRaiseHand: (raised: boolean) => {
+      send({ type: 'RAISE_HAND', raised });
+    },
+    sendLowerHand: (targetUserId?: string) => {
+      send({ type: 'LOWER_HAND', targetUserId });
+    },
+    sendReaction: (emoji: string) => {
+      send({ type: 'SEND_REACTION', emoji });
     },
     sendStartPresenting: () => {
       send({ type: 'START_PRESENTING' });

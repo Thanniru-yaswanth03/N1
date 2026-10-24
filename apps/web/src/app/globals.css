@@ -165,3 +165,30 @@ body::after {
   background-color: rgba(124, 58, 237, 0.35);
   color: #ffffff;
 }
+
+/* Floating Reactions */
+@keyframes reactionFloat {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-25px) scale(1.15);
+  }
+  40% {
+    transform: translateY(-100px) scale(1) rotate(-6deg);
+  }
+  75% {
+    opacity: 0.9;
+    transform: translateY(-240px) scale(1) rotate(6deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-380px) scale(0.8);
+  }
+}
+
+.animate-reaction-float {
+  animation: reactionFloat 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}

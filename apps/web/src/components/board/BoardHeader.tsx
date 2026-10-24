@@ -26,6 +26,12 @@ export interface BoardHeaderProps {
   onStopPresenting?: () => void;
   onPromoteUser?: (userId: string) => void;
   onRevokeAdmin?: (userId: string) => void;
+  onKickUser?: (userId: string) => void;
+  onLowerHand?: (userId: string) => void;
+  onToggleChat?: () => void;
+  unreadMessageCount?: number;
+  handRaised?: boolean;
+  onToggleRaiseHand?: () => void;
   allowParticipantEditing?: boolean;
   onToggleParticipantEditing?: (allowed: boolean) => void;
   recentActivity?: { action: string; details?: string; userName: string; timestamp: number } | null;
@@ -56,6 +62,12 @@ export function BoardHeader({
   onStopPresenting,
   onPromoteUser,
   onRevokeAdmin,
+  onKickUser,
+  onLowerHand,
+  onToggleChat,
+  unreadMessageCount = 0,
+  handRaised = false,
+  onToggleRaiseHand,
   allowParticipantEditing = true,
   onToggleParticipantEditing,
   recentActivity,
@@ -209,6 +221,43 @@ export function BoardHeader({
               {connectedUsers.length}
             </span>
           </button>
+
+          {/* Live Classroom Chat Button */}
+          {onToggleChat && (
+            <button
+              type="button"
+              onClick={onToggleChat}
+              title="Open Classroom Chat & Q&A"
+              aria-label="Classroom Chat"
+              className="flex items-center gap-1.5 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-all shrink-0 relative"
+            >
+              <span>💬</span>
+              <span className="hidden sm:inline">Chat</span>
+              {(unreadMessageCount || 0) > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-rose-500 text-white font-bold animate-pulse shadow-sm">
+                  {unreadMessageCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Raise Hand Button */}
+          {onToggleRaiseHand && (
+            <button
+              type="button"
+              onClick={onToggleRaiseHand}
+              title={handRaised ? 'Lower your hand' : 'Raise hand to ask question'}
+              aria-label={handRaised ? 'Lower Hand' : 'Raise Hand'}
+              className={`flex items-center gap-1 px-2 py-0.5 sm:py-1 rounded-xl text-xs font-semibold border transition-all shrink-0 ${
+                handRaised
+                  ? 'bg-amber-500/25 text-amber-300 border-amber-500/50 shadow-sm animate-pulse'
+                  : 'bg-white/5 hover:bg-white/10 text-zinc-300 border-white/10'
+              }`}
+            >
+              <span>✋</span>
+              <span className="hidden md:inline">{handRaised ? 'Raised' : 'Hand'}</span>
+            </button>
+          )}
 
           {/* Connection Status Indicator */}
           <div
@@ -490,6 +539,8 @@ export function BoardHeader({
         onStopPresenting={onStopPresenting || (() => {})}
         onPromoteUser={onPromoteUser || (() => {})}
         onRevokeAdmin={onRevokeAdmin || (() => {})}
+        onKickUser={onKickUser || (() => {})}
+        onLowerHand={onLowerHand}
         allowParticipantEditing={allowParticipantEditing}
         onToggleParticipantEditing={onToggleParticipantEditing}
       />

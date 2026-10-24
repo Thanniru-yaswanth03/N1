@@ -22,6 +22,8 @@ export interface ParticipantsModalProps {
   onStopPresenting: () => void;
   onPromoteUser: (userId: string) => void;
   onRevokeAdmin: (userId: string) => void;
+  onKickUser: (userId: string) => void;
+  onLowerHand?: (userId: string) => void;
   allowParticipantEditing: boolean;
   onToggleParticipantEditing?: (allowed: boolean) => void;
 }
@@ -43,9 +45,13 @@ export function ParticipantsModal({
   onStopPresenting,
   onPromoteUser,
   onRevokeAdmin,
+  onKickUser,
+  onLowerHand,
   allowParticipantEditing,
   onToggleParticipantEditing,
 }: ParticipantsModalProps) {
+  const [confirmKickId, setConfirmKickId] = React.useState<string | null>(null);
+
   if (!isOpen) return null;
 
   const isCurrentPresenter = presenterUserId === currentUser?.id;
@@ -218,6 +224,11 @@ export function ParticipantsModal({
                             📡 Presenting
                           </span>
                         )}
+                        {user.handRaised && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse flex items-center gap-0.5">
+                            ✋ Hand Raised
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5 mt-0.5">
@@ -238,8 +249,21 @@ export function ParticipantsModal({
                     </div>
                   </div>
 
-                  {/* Right: Actions (Promote / Revoke for Admins) */}
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Right: Actions (Promote / Revoke / Lower Hand / Kick User) */}
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                    {/* Lower hand action for admins */}
+                    {isAdmin && user.handRaised && (
+                      <button
+                        type="button"
+                        onClick={() => onLowerHand?.(user.id)}
+                        title="Lower student's hand"
+                        className="px-2 py-1 rounded-lg text-xs font-medium bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-all flex items-center gap-1"
+                      >
+                        ✋ Lower
+                      </button>
+                    )}
+
+                    {/* Promote / Revoke Admin */}
                     {isAdmin && !isUserSelf && !isUserOwner && (
                       <>
                         {!isUserAdmin ? (
@@ -249,7 +273,7 @@ export function ParticipantsModal({
                             title={`Promote ${user.name} to Room Admin`}
                             className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1 shadow-sm"
                           >
-                            <span>🛡️ Promote to Admin</span>
+                            <span>🛡️ Promote</span>
                           </button>
                         ) : (
                           <button
@@ -258,10 +282,46 @@ export function ParticipantsModal({
                             title={`Revoke Room Admin rights from ${user.name}`}
                             className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 transition-all"
                           >
-                            <span>Revoke Admin</span>
+                            <span>Revoke</span>
                           </button>
                         )}
                       </>
+                    )}
+
+                    {/* Kick User Button with 2-step confirmation */}
+                    {isAdmin && !isUserSelf && !isUserOwner && (!isUserAdmin || isCreator) && (
+                      confirmKickId === user.id ? (
+                        <div className="flex items-center gap-1 animate-in fade-in duration-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onKickUser(user.id);
+                              setConfirmKickId(null);
+                            }}
+                            title={`Confirm removing ${user.name}`}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-sm transition-all"
+                          >
+                            Confirm Kick
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmKickId(null)}
+                            title="Cancel kick"
+                            className="px-2 py-1 rounded-lg text-xs text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmKickId(user.id)}
+                          title={`Remove ${user.name} from room`}
+                          className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all flex items-center gap-1"
+                        >
+                          <span>🚫 Kick</span>
+                        </button>
+                      )
                     )}
                   </div>
                 </div>
