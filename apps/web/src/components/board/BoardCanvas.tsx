@@ -1264,6 +1264,28 @@ export function BoardCanvas({
     return () => cancelAnimationFrame(animId);
   }, [render]);
 
+  // Prevent mobile browser bounce, pull-to-refresh, and edge-swipe back navigation during canvas interaction
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const preventDefaultTouch = (e: TouchEvent) => {
+      if (e.touches.length >= 1) {
+        if (e.target === canvasRef.current || e.target === el) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    el.addEventListener('touchstart', preventDefaultTouch, { passive: false });
+    el.addEventListener('touchmove', preventDefaultTouch, { passive: false });
+
+    return () => {
+      el.removeEventListener('touchstart', preventDefaultTouch);
+      el.removeEventListener('touchmove', preventDefaultTouch);
+    };
+  }, []);
+
   // Mouse wheel zoom & pan
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -1297,8 +1319,13 @@ export function BoardCanvas({
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     // Multi-touch pinch-to-zoom & two-finger pan
-    if (activePointersRef.current.size === 2) {
+    if (activePointersRef.current.size >= 2) {
       onUserManualPan?.();
+      try {
+        (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+      } catch (_err) {
+        void _err;
+      }
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
       const p1 = pts[1];
@@ -1547,7 +1574,6 @@ export function BoardCanvas({
 
     // Pinch-to-zoom & two-finger panning calculation
     if (activePointersRef.current.size === 2 && initialPinchDistRef.current && initialMidpointRef.current) {
-      onUserManualPan?.();
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
       const p1 = pts[1];
@@ -1559,11 +1585,14 @@ export function BoardCanvas({
 
         const currentMidX = (p0.x + p1.x) / 2;
         const currentMidY = (p0.y + p1.y) / 2;
-        const deltaX = currentMidX - initialMidpointRef.current.x;
-        const deltaY = currentMidY - initialMidpointRef.current.y;
+
+        // Accurate zoom scaling centered around pinch midpoint:
+        const worldMidX = (initialMidpointRef.current.x - initialPanRef.current.x) / initialZoomRef.current;
+        const worldMidY = (initialMidpointRef.current.y - initialPanRef.current.y) / initialZoomRef.current;
+
         const nextPan = {
-          x: initialPanRef.current.x + deltaX,
-          y: initialPanRef.current.y + deltaY,
+          x: currentMidX - worldMidX * nextZoom,
+          y: currentMidY - worldMidY * nextZoom,
         };
         setPan(nextPan);
         if (isCreatorRef.current) {
@@ -1577,7 +1606,6 @@ export function BoardCanvas({
     onCursorMove?.(world.x, world.y);
 
     if (isPanning) {
-      onUserManualPan?.();
       const nextPan = {
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y,
@@ -1708,21 +1736,27 @@ export function BoardCanvas({
 
   // Pointer Up Handler
   const handlePointerUp = (e: React.PointerEvent) => {
-    activePointersRef.current.delete(e.pointerId);
-    if (activePointersRef.current.size < 2) {
-      if (initialPinchDistRef.current !== null) {
-        initialPinchDistRef.current = null;
-        initialMidpointRef.current = null;
-        return;
-      }
-      initialPinchDistRef.current = null;
-      initialMidpointRef.current = null;
-    }
-
     try {
       (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
     } catch (_err) {
       void _err;
+    }
+
+    activePointersRef.current.delete(e.pointerId);
+
+    // Seamless transition from 2-finger pinch into single-finger pan
+    if (initialPinchDistRef.current !== null) {
+      initialPinchDistRef.current = null;
+      initialMidpointRef.current = null;
+
+      if (activePointersRef.current.size === 1) {
+        const remaining = Array.from(activePointersRef.current.values())[0];
+        if (remaining && (!canEdit || activeTool === 'hand' || isSpacePressed)) {
+          setIsPanning(true);
+          setPanStart({ x: remaining.x - pan.x, y: remaining.y - pan.y });
+          return;
+        }
+      }
     }
 
     if (isPanning) {

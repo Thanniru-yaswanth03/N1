@@ -89,6 +89,98 @@ export function BoardToolbar({
     }
   }, [canEdit, activeTool, setActiveTool]);
 
+  // When editing is locked (View-Only participant), render a clean, non-intrusive viewer dock
+  if (!canEdit) {
+    return (
+      <aside
+        aria-label="Viewer navigation controls"
+        className="fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:bottom-6 left-1/2 -translate-x-1/2 z-40 select-none max-w-[96vw]"
+      >
+        <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-2xl border border-white/10 bg-[#10101c]/95 backdrop-blur-xl shadow-2xl">
+          {/* View Only Tag */}
+          <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold shrink-0">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <span className="hidden xs:inline">View Only</span>
+          </div>
+
+          <div className="w-[1px] h-5 bg-white/10 shrink-0" />
+
+          {/* Pan Tool */}
+          <button
+            type="button"
+            onClick={() => setActiveTool('hand')}
+            title="Pan / Swipe Tool (Drag canvas to navigate)"
+            className={`px-2.5 py-1 rounded-xl text-xs font-medium flex items-center gap-1 transition-all min-h-[34px] ${
+              activeTool === 'hand'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <span className="text-sm">✋</span>
+            <span className="text-xs font-semibold">Pan</span>
+          </button>
+
+          {/* Select Tool */}
+          <button
+            type="button"
+            onClick={() => setActiveTool('select')}
+            title="Select Tool (Tap elements to inspect)"
+            className={`px-2.5 py-1 rounded-xl text-xs font-medium flex items-center gap-1 transition-all min-h-[34px] ${
+              activeTool === 'select'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <span className="text-sm">↖</span>
+            <span className="text-xs font-semibold">Select</span>
+          </button>
+
+          <div className="w-[1px] h-5 bg-white/10 shrink-0" />
+
+          {/* Integrated Zoom Controls */}
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setZoom(z => Math.max(0.25, Math.round((z - 0.1) * 10) / 10))}
+              title="Zoom Out (-)"
+              className="w-7 h-7 rounded-lg hover:bg-white/10 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-sm"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              onClick={resetZoom}
+              title="Reset Zoom to 100%"
+              className="px-1.5 py-0.5 rounded text-[11px] font-mono font-bold text-zinc-300 hover:text-white hover:bg-white/10"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoom(z => Math.min(3.0, Math.round((z + 0.1) * 10) / 10))}
+              title="Zoom In (+)"
+              className="w-7 h-7 rounded-lg hover:bg-white/10 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-sm"
+            >
+              +
+            </button>
+            {onFitToScreen && (
+              <button
+                type="button"
+                onClick={onFitToScreen}
+                title="Fit to Screen"
+                className="w-7 h-7 rounded-lg hover:bg-white/10 text-zinc-300 hover:text-cyan-300 flex items-center justify-center text-xs ml-0.5 border-l border-white/10 pl-1"
+              >
+                ⛶
+              </button>
+            )}
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <>
       {/* ── Main Centered Floating Tool Dock ── */}
@@ -96,14 +188,6 @@ export function BoardToolbar({
         aria-label="Drawing tools"
         className="fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[96vw] sm:max-w-none select-none"
       >
-        {!canEdit && (
-          <div className="mb-2 px-3 py-1 mx-auto w-fit rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-semibold flex items-center gap-1.5 shadow-lg backdrop-blur-md animate-fadeIn">
-            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            <span>View Only — Editing is locked to Room Admins</span>
-          </div>
-        )}
 
         {/* Expandable Color & Stroke Tray (Floating above toolbar) */}
         {colorTrayOpen && canEdit && (

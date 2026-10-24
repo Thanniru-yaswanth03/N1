@@ -533,7 +533,7 @@ export default function StudyBoardRoomPage() {
   // User manual exploration / scroll tracking
   const handleUserManualPan = useCallback(() => {
     if (isAdmin) return; // Room admins lead and don't get auto-focused
-    setIsUserExploring(true);
+    setIsUserExploring(prev => (prev ? prev : true));
 
     if (userExploringTimerRef.current) {
       clearTimeout(userExploringTimerRef.current);
@@ -769,41 +769,45 @@ export default function StudyBoardRoomPage() {
         />
       </main>
 
-      {/* ── Participant Auto-Focus & Free Scroll Status Pill ── */}
+      {/* ── Participant Auto-Focus & Free Scroll Status Pill (Top HUD, Never Collides with Toolbar) ── */}
       {!isAdmin && (
-        <div className="fixed bottom-20 sm:bottom-24 left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div
+          className={`fixed ${
+            connectionStatus !== 'CONNECTED' ? 'top-26' : 'top-16'
+          } left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in slide-in-from-top-2 duration-200 select-none max-w-[94vw]`}
+        >
           {isUserExploring ? (
-            <div className="px-3.5 py-1.5 rounded-full bg-[#10101c]/95 border border-purple-500/40 text-purple-200 text-xs font-medium backdrop-blur-xl flex items-center gap-2.5 shadow-2xl">
-              <span className="flex items-center gap-1.5 text-zinc-300">
+            <div className="px-3.5 py-1.5 rounded-full bg-[#10101c]/95 border border-purple-500/40 text-purple-200 text-xs font-medium backdrop-blur-xl flex items-center gap-2 shadow-2xl">
+              <span className="flex items-center gap-1.5 text-zinc-300 shrink-0">
                 <span className="w-2 h-2 rounded-full bg-amber-400" />
-                <span>Free Scroll Active</span>
+                <span className="text-[11px] sm:text-xs">Free Scroll</span>
               </span>
               <span className="text-zinc-600">|</span>
               <button
                 type="button"
                 onClick={handleSnapToAdmin}
-                className="px-2.5 py-1 rounded-full bg-purple-500/25 hover:bg-purple-500/40 text-purple-200 hover:text-white text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-0.5 rounded-full bg-purple-500/25 hover:bg-purple-500/40 text-purple-200 hover:text-white text-[11px] sm:text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shrink-0"
                 title="Snap back to Admin's active changes"
               >
                 <span>🎯 Snap to Admin</span>
               </button>
             </div>
           ) : autoFocusEnabled ? (
-            <div className="px-3.5 py-1 rounded-full bg-[#10101c]/85 border border-emerald-500/30 text-emerald-300 text-xs font-medium backdrop-blur-md flex items-center gap-2 shadow-lg">
+            <div className="px-3.5 py-1 rounded-full bg-[#10101c]/90 border border-emerald-500/30 text-emerald-300 text-xs font-medium backdrop-blur-md flex items-center gap-2 shadow-lg">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>🎯 Focusing on Admin</span>
+              <span className="text-[11px] sm:text-xs">🎯 Focusing on Admin</span>
               <button
                 type="button"
                 onClick={() => setIsUserExploring(true)}
-                className="text-zinc-400 hover:text-zinc-200 text-[11px] underline ml-1 cursor-pointer"
+                className="text-zinc-400 hover:text-zinc-200 text-[10px] sm:text-[11px] underline ml-1 cursor-pointer"
                 title="Explore anywhere on canvas without auto-repositioning"
               >
-                Free scroll
+                Explore
               </button>
             </div>
           ) : (
-            <div className="px-3 py-1 rounded-full bg-[#10101c]/85 border border-zinc-700 text-zinc-400 text-xs font-medium backdrop-blur-md flex items-center gap-2 shadow-lg">
-              <span>👁️ Free View</span>
+            <div className="px-3 py-1 rounded-full bg-[#10101c]/90 border border-zinc-700 text-zinc-400 text-xs font-medium backdrop-blur-md flex items-center gap-2 shadow-lg">
+              <span className="text-[11px] sm:text-xs">👁️ Free View</span>
               <button
                 type="button"
                 onClick={handleSnapToAdmin}
