@@ -27,6 +27,7 @@ export interface BoardToolbarProps {
   setZoom: (fn: (prev: number) => number) => void;
   resetZoom: () => void;
   onFitToScreen?: () => void;
+  canEdit?: boolean;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -67,6 +68,7 @@ export function BoardToolbar({
   setZoom,
   resetZoom,
   onFitToScreen,
+  canEdit = true,
   canUndo,
   canRedo,
   onUndo,
@@ -80,6 +82,13 @@ export function BoardToolbar({
     setCustomHex(activeColor);
   }, [activeColor]);
 
+  // If editing gets locked, reset active drawing tool to hand/select
+  useEffect(() => {
+    if (!canEdit && activeTool !== 'select' && activeTool !== 'hand') {
+      setActiveTool('hand');
+    }
+  }, [canEdit, activeTool, setActiveTool]);
+
   return (
     <>
       {/* ── Main Centered Floating Tool Dock ── */}
@@ -87,8 +96,17 @@ export function BoardToolbar({
         aria-label="Drawing tools"
         className="fixed bottom-3 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[96vw] sm:max-w-none select-none"
       >
+        {!canEdit && (
+          <div className="mb-2 px-3 py-1 mx-auto w-fit rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-semibold flex items-center gap-1.5 shadow-lg backdrop-blur-md animate-fadeIn">
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <span>View Only — Teacher has locked participant editing</span>
+          </div>
+        )}
+
         {/* Expandable Color & Stroke Tray (Floating above toolbar) */}
-        {colorTrayOpen && (
+        {colorTrayOpen && canEdit && (
           <div className="mb-2 p-2.5 rounded-2xl border border-cyan-500/25 bg-[#10101c]/95 backdrop-blur-xl shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-150">
             {/* Presets + Full RGB Color Picker + Hex Input */}
             <div className="flex items-center gap-2 flex-wrap">
@@ -234,10 +252,11 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('pen')}
-              title="Freehand Pen (P)"
+              disabled={!canEdit}
+              title={canEdit ? 'Freehand Pen (P)' : 'Editing locked by Teacher'}
               aria-label="Freehand Pen tool"
               aria-pressed={activeTool === 'pen'}
-              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${
+              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed ${
                 activeTool === 'pen'
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
@@ -252,10 +271,11 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('highlighter')}
-              title="Highlighter"
+              disabled={!canEdit}
+              title={canEdit ? 'Highlighter' : 'Editing locked by Teacher'}
               aria-label="Highlighter tool"
               aria-pressed={activeTool === 'highlighter'}
-              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${
+              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed ${
                 activeTool === 'highlighter'
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
@@ -276,13 +296,15 @@ export function BoardToolbar({
               <button
                 type="button"
                 onClick={() => {
+                  if (!canEdit) return;
                   setActiveTool('shape');
                   setShapeMenuOpen(!shapeMenuOpen);
                 }}
-                title="Shapes"
+                disabled={!canEdit}
+                title={canEdit ? 'Shapes' : 'Editing locked by Teacher'}
                 aria-label="Select shape"
                 aria-pressed={activeTool === 'shape'}
-                className={`p-2 rounded-xl text-xs font-medium transition-all flex items-center gap-1 min-w-[42px] min-h-[36px] justify-center ${
+                className={`p-2 rounded-xl text-xs font-medium transition-all flex items-center gap-1 min-w-[42px] min-h-[36px] justify-center disabled:opacity-25 disabled:cursor-not-allowed ${
                   activeTool === 'shape'
                     ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
                     : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
@@ -296,7 +318,7 @@ export function BoardToolbar({
                 </svg>
               </button>
 
-              {shapeMenuOpen && (
+              {shapeMenuOpen && canEdit && (
                 <div className="absolute bottom-full mb-2 left-0 p-1.5 rounded-xl border border-cyan-500/20 bg-[#12121e] shadow-2xl min-w-[150px] space-y-1 z-50 animate-in fade-in zoom-in-95 duration-100">
                   {SHAPES.map(s => (
                     <button
@@ -325,10 +347,11 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('arrow')}
-              title="Arrow (A)"
+              disabled={!canEdit}
+              title={canEdit ? 'Arrow (A)' : 'Editing locked by Teacher'}
               aria-label="Arrow tool"
               aria-pressed={activeTool === 'arrow'}
-              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${
+              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed ${
                 activeTool === 'arrow'
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
@@ -348,10 +371,11 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('text')}
-              title="Text (T) — Click canvas to write"
+              disabled={!canEdit}
+              title={canEdit ? 'Text (T) — Click canvas to write' : 'Editing locked by Teacher'}
               aria-label="Text tool"
               aria-pressed={activeTool === 'text'}
-              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${
+              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed ${
                 activeTool === 'text'
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/20 ring-1 ring-cyan-400'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
@@ -364,10 +388,11 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('sticky')}
-              title="Add Sticky Note (N)"
+              disabled={!canEdit}
+              title={canEdit ? 'Add Sticky Note (N)' : 'Editing locked by Teacher'}
               aria-label="Sticky note tool"
               aria-pressed={activeTool === 'sticky'}
-              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center ${
+              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed ${
                 activeTool === 'sticky'
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
@@ -387,10 +412,11 @@ export function BoardToolbar({
             <button
               type="button"
               onClick={() => setActiveTool('eraser')}
-              title="Eraser & Area Delete (E) — Click item or drag a box across text & diagrams to delete"
+              disabled={!canEdit}
+              title={canEdit ? 'Eraser & Area Delete (E)' : 'Editing locked by Teacher'}
               aria-label="Eraser & Area Delete tool"
               aria-pressed={activeTool === 'eraser'}
-              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer ${
+              className={`p-2 rounded-xl text-xs font-medium transition-all min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer disabled:opacity-25 disabled:cursor-not-allowed ${
                 activeTool === 'eraser'
                   ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-500/20'
                   : 'text-[var(--color-text-secondary)] hover:text-white hover:bg-white/5'
@@ -404,11 +430,15 @@ export function BoardToolbar({
             {/* Color Palette Toggle Pill */}
             <button
               type="button"
-              onClick={() => setColorTrayOpen(!colorTrayOpen)}
-              title="Color & Stroke Options"
+              onClick={() => {
+                if (!canEdit) return;
+                setColorTrayOpen(!colorTrayOpen);
+              }}
+              disabled={!canEdit}
+              title={canEdit ? 'Color & Stroke Options' : 'Editing locked by Teacher'}
               aria-label="Open color palette"
               aria-expanded={colorTrayOpen}
-              className={`p-1.5 sm:px-2 rounded-xl border flex items-center gap-1.5 transition-all min-h-[36px] ${
+              className={`p-1.5 sm:px-2 rounded-xl border flex items-center gap-1.5 transition-all min-h-[36px] disabled:opacity-25 disabled:cursor-not-allowed ${
                 colorTrayOpen
                   ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
                   : 'bg-white/5 border-white/10 text-[var(--color-text-secondary)] hover:bg-white/10'

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { boardRoomRepository, IBoardRoomRepository } from '../repositories/board-room.repository.js';
 import { generateDropCode } from '../security/tokens.js';
 import { getTemplateElements } from '@n1/shared';
@@ -14,6 +15,7 @@ export interface BoardRoomDetailResult {
   expiresAt: string;
   isExpired: boolean;
   timeRemainingSeconds: number;
+  allowParticipantEditing: boolean;
 }
 
 export class BoardRoomService {
@@ -42,6 +44,7 @@ export class BoardRoomService {
     const expiresInMs = (input.expiresInHours || 24) * 60 * 60 * 1000;
     const now = new Date();
     const expiresAt = new Date(now.getTime() + expiresInMs);
+    const creatorToken = `cr_${crypto.randomBytes(16).toString('hex')}`;
 
     const initialElements = getTemplateElements(input.template || 'blank');
 
@@ -50,6 +53,8 @@ export class BoardRoomService {
       title: input.title || 'Study Session',
       template: input.template || 'blank',
       elements: initialElements,
+      creatorToken,
+      allowParticipantEditing: true,
       createdAt: now,
       expiresAt,
       isExpired: false,
@@ -83,6 +88,7 @@ export class BoardRoomService {
         expiresAt: room.expiresAt.toISOString(),
         isExpired: true,
         timeRemainingSeconds: 0,
+        allowParticipantEditing: false,
       };
     }
 
@@ -100,7 +106,40 @@ export class BoardRoomService {
       expiresAt: room.expiresAt.toISOString(),
       isExpired: false,
       timeRemainingSeconds,
+      allowParticipantEditing: room.allowParticipantEditing ?? true,
     };
+  }
+
+  /**
+   * Verifies if a token matches the room creator, or claims creator role
+   * if the room has no token yet (legacy rooms).
+   */
+  async verifyOrClaimCreator(
+    code: string,
+    providedToken?: string | null
+  ): Promise<{ isCreator: boolean; token: string }> {
+    const room = await this.repo.findByCode(code);
+    if (!room) {
+      return { isCreator: false, token: '' };
+    }
+
+    if (!room.creatorToken) {
+      // First user to join legacy room becomes Creator
+      const newToken = providedToken || `cr_${crypto.randomBytes(16).toString('hex')}`;
+      await this.repo.setCreatorToken(code, newToken);
+      return { isCreator: true, token: newToken };
+    }
+
+    const isMatch = Boolean(providedToken && providedToken === room.creatorToken);
+    return { isCreator: isMatch, token: room.creatorToken };
+  }
+
+  /**
+   * Updates participant editing permission for a room.
+   */
+  async updatePermissions(code: string, allowParticipantEditing: boolean): Promise<boolean> {
+    const updated = await this.repo.updatePermissions(code, allowParticipantEditing);
+    return !!updated;
   }
 
   /**
@@ -128,6 +167,8 @@ export class BoardRoomService {
       title: room.title,
       template: room.template,
       elementCount: (room.elements || []).length,
+      allowParticipantEditing: room.allowParticipantEditing ?? true,
+      creatorToken: room.creatorToken,
       createdAt: room.createdAt.toISOString(),
       expiresAt: room.expiresAt.toISOString(),
       isExpired: room.isExpired,

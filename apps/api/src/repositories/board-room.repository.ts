@@ -6,6 +6,8 @@ export interface IBoardRoomRepository {
   findByCode(code: string): Promise<IBoardRoomDocument | null>;
   updateElements(code: string, elements: BoardElement[]): Promise<IBoardRoomDocument | null>;
   clearElements(code: string): Promise<IBoardRoomDocument | null>;
+  updatePermissions(code: string, allowParticipantEditing: boolean): Promise<IBoardRoomDocument | null>;
+  setCreatorToken(code: string, creatorToken: string): Promise<IBoardRoomDocument | null>;
   findExpired(referenceTime?: Date, limit?: number): Promise<IBoardRoomDocument[]>;
   markAsExpired(id: string): Promise<IBoardRoomDocument | null>;
   deleteExpired(referenceTime?: Date): Promise<number>;
@@ -41,6 +43,32 @@ export class BoardRoomRepository implements IBoardRoomRepository {
       {
         $set: {
           elements: [],
+          lastActivityAt: new Date(),
+        },
+      },
+      { returnDocument: 'after' }
+    ).exec();
+  }
+
+  async updatePermissions(code: string, allowParticipantEditing: boolean): Promise<IBoardRoomDocument | null> {
+    return BoardRoomModel.findOneAndUpdate(
+      { code: code.toUpperCase().trim(), isExpired: false },
+      {
+        $set: {
+          allowParticipantEditing,
+          lastActivityAt: new Date(),
+        },
+      },
+      { returnDocument: 'after' }
+    ).exec();
+  }
+
+  async setCreatorToken(code: string, creatorToken: string): Promise<IBoardRoomDocument | null> {
+    return BoardRoomModel.findOneAndUpdate(
+      { code: code.toUpperCase().trim(), isExpired: false },
+      {
+        $set: {
+          creatorToken,
           lastActivityAt: new Date(),
         },
       },

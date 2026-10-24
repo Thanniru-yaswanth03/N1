@@ -16,6 +16,14 @@ export interface BoardHeaderProps {
   connectionStatus?: BoardConnectionStatus;
   connectedUsers: ConnectedBoardUser[];
   currentUser: ConnectedBoardUser | null;
+  isCreator?: boolean;
+  allowParticipantEditing?: boolean;
+  isBroadcastingViewport?: boolean;
+  onToggleBroadcastViewport?: () => void;
+  isFollowingTeacher?: boolean;
+  onToggleFollowTeacher?: () => void;
+  onToggleParticipantEditing?: (allowed: boolean) => void;
+  recentActivity?: { action: string; details?: string; userName: string; timestamp: number } | null;
   onShare: () => void;
   onExportPng: () => void;
   onExportSvg: () => void;
@@ -34,6 +42,14 @@ export function BoardHeader({
   connectionStatus = isConnected ? 'CONNECTED' : 'DISCONNECTED',
   connectedUsers,
   currentUser,
+  isCreator = false,
+  allowParticipantEditing = true,
+  isBroadcastingViewport = false,
+  onToggleBroadcastViewport,
+  isFollowingTeacher = true,
+  onToggleFollowTeacher,
+  onToggleParticipantEditing,
+  recentActivity,
   onShare,
   onExportPng,
   onExportSvg,
@@ -101,8 +117,8 @@ export function BoardHeader({
 
   return (
     <header className="fixed top-0 left-0 right-0 z-40 h-14 px-2.5 sm:px-4 border-b border-[var(--color-border-subtle)] bg-[#09090f]/90 backdrop-blur-xl flex items-center justify-between gap-2 select-none">
-      {/* ── Left: Back Link, Room Title, Code Badge, Connection Pill ── */}
-      <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+      {/* ── Left: Back Link, Room Title, Code Badge, Connection Pill, Roles & Controls ── */}
+      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
         <Link
           href="/board"
           aria-label="Back to Study Board Hub"
@@ -116,7 +132,7 @@ export function BoardHeader({
 
         {/* Room Title */}
         <span
-          className="text-xs sm:text-sm font-bold text-white max-w-[90px] xs:max-w-[130px] sm:max-w-[200px] truncate"
+          className="text-xs sm:text-sm font-bold text-white max-w-[80px] xs:max-w-[110px] sm:max-w-[160px] truncate"
           title={roomTitle}
         >
           {roomTitle}
@@ -137,7 +153,18 @@ export function BoardHeader({
           {copiedCode && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
         </button>
 
-        {/* Connection Status Indicator (Visible on ALL devices) */}
+        {/* Role Badge */}
+        {isCreator ? (
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0">
+            👑 Teacher
+          </span>
+        ) : (
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0">
+            🎓 Student
+          </span>
+        )}
+
+        {/* Connection Status Indicator */}
         <div
           role="status"
           aria-label={`Connection status: ${connectionStatus}`}
@@ -163,9 +190,69 @@ export function BoardHeader({
           </span>
         </div>
 
+        {/* Classroom Controls: Teacher Presentation / Broadcast Viewport */}
+        {isCreator && onToggleBroadcastViewport && (
+          <button
+            type="button"
+            onClick={onToggleBroadcastViewport}
+            title={
+              isBroadcastingViewport
+                ? 'Broadcast active: Students are following your viewport'
+                : 'Click to broadcast your viewport to all connected students'
+            }
+            className={`hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+              isBroadcastingViewport
+                ? 'bg-cyan-500 text-black font-bold shadow-md shadow-cyan-500/30 ring-1 ring-cyan-300'
+                : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-cyan-500/30'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${isBroadcastingViewport ? 'bg-black animate-ping' : 'bg-cyan-400'}`} />
+            <span>{isBroadcastingViewport ? '📡 Live View' : '📡 Broadcast'}</span>
+          </button>
+        )}
+
+        {/* Classroom Controls: Teacher Toggle Student Editing */}
+        {isCreator && onToggleParticipantEditing && (
+          <button
+            type="button"
+            onClick={() => onToggleParticipantEditing(!allowParticipantEditing)}
+            title={allowParticipantEditing ? 'Lock student editing (View Only mode)' : 'Unlock student editing'}
+            className={`hidden lg:flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+              allowParticipantEditing
+                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25'
+                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+            }`}
+          >
+            <span>{allowParticipantEditing ? '✏️ Student Edits: ON' : '🔒 Student Edits: LOCKED'}</span>
+          </button>
+        )}
+
+        {/* Classroom Controls: Student Follow Teacher View */}
+        {!isCreator && onToggleFollowTeacher && (
+          <button
+            type="button"
+            onClick={onToggleFollowTeacher}
+            title={isFollowingTeacher ? 'Following teacher (Click to explore freely)' : 'Click to snap back to Teacher view'}
+            className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+              isFollowingTeacher
+                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                : 'bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10'
+            }`}
+          >
+            <span>{isFollowingTeacher ? '👁️ Follow Teacher' : '🎯 Snap to Teacher'}</span>
+          </button>
+        )}
+
+        {/* View Only indicator for students when editing locked */}
+        {!isCreator && !allowParticipantEditing && (
+          <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">
+            🔒 View Only
+          </span>
+        )}
+
         {/* Live Expiration Countdown (Desktop) */}
         {timeRemaining && (
-          <div className="hidden xl:flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] bg-[var(--color-surface)]">
+          <div className="hidden 2xl:flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] bg-[var(--color-surface)]">
             <svg className="w-3 h-3 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -176,21 +263,38 @@ export function BoardHeader({
 
       {/* ── Right: Peers, Desktop Actions, Mobile More Menu, Share Button ── */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* Subtle Live Activity Banner */}
+        {recentActivity && (
+          <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[11px] font-medium animate-fadeIn max-w-[280px] truncate shadow-sm">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+            <span className="truncate">
+              <strong className="text-white">{recentActivity.userName}</strong>: {recentActivity.action}
+            </span>
+          </div>
+        )}
+
         {/* Connected Online Peer Avatars (Tablet / Desktop) */}
         <div className="hidden md:flex items-center -space-x-1.5 pr-1">
-          {connectedUsers.slice(0, 4).map(u => (
+          {connectedUsers.slice(0, 5).map(u => (
             <div
               key={u.id}
-              title={`${u.name}${u.id === currentUser?.id ? ' (You)' : ''}`}
+              title={`${u.name} (${u.role === 'creator' ? '👑 Teacher' : 'Student'})${
+                u.id === currentUser?.id ? ' - You' : ''
+              }`}
               style={{ backgroundColor: u.color }}
-              className="w-6 h-6 rounded-full border-2 border-[#09090f] flex items-center justify-center text-[10px] font-bold text-black uppercase shadow-sm"
+              className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-black uppercase shadow-sm relative ${
+                u.role === 'creator' ? 'border-amber-400 ring-1 ring-amber-400/50' : 'border-[#09090f]'
+              }`}
             >
               {u.name.charAt(0)}
+              {u.role === 'creator' && (
+                <span className="absolute -top-1.5 -right-1 text-[8px] leading-none">👑</span>
+              )}
             </div>
           ))}
-          {connectedUsers.length > 4 && (
+          {connectedUsers.length > 5 && (
             <div className="w-6 h-6 rounded-full border-2 border-[#09090f] bg-slate-800 text-[9px] font-mono text-white flex items-center justify-center">
-              +{connectedUsers.length - 4}
+              +{connectedUsers.length - 5}
             </div>
           )}
         </div>

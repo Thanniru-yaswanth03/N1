@@ -6,6 +6,8 @@ export interface IBoardRoomDocument extends Document {
   title: string;
   template: BoardTemplate;
   elements: BoardElement[];
+  creatorToken?: string;
+  allowParticipantEditing: boolean;
   createdAt: Date;
   expiresAt: Date;
   isExpired: boolean;
@@ -49,6 +51,15 @@ const BoardRoomSchema = new Schema<IBoardRoomDocument>(
     elements: {
       type: Schema.Types.Mixed,
       default: [],
+    },
+    creatorToken: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    allowParticipantEditing: {
+      type: Boolean,
+      default: true,
     },
     createdAt: {
       type: Date,

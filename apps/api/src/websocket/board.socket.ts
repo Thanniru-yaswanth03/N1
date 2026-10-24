@@ -43,6 +43,8 @@ interface ClientSession {
   userName: string;
   userColor: string;
   roomCode: string | null;
+  isCreator: boolean;
+  creatorToken: string | null;
   isAlive: boolean;
   messageCount: number;
   windowStart: number;
@@ -55,6 +57,7 @@ interface SessionWebSocket extends WebSocket {
 export class BoardWebSocketManager {
   private wss: WebSocketServer | null = null;
   private roomClients = new Map<string, Set<ClientSession>>();
+  private roomPermissions = new Map<string, boolean>();
   private saveDebounceTimers = new Map<string, NodeJS.Timeout>();
   private pendingElements = new Map<string, BoardElement[]>();
 
@@ -99,6 +102,7 @@ export class BoardWebSocketManager {
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     const queryRoom = url.searchParams.get('room')?.toUpperCase().trim() || null;
     const queryName = url.searchParams.get('name')?.trim() || null;
+    const queryToken = url.searchParams.get('token')?.trim() || null;
 
     const session: ClientSession = {
       ws,
@@ -108,6 +112,8 @@ export class BoardWebSocketManager {
       userColor:
         ANONYMOUS_COLORS[Math.floor(Math.random() * ANONYMOUS_COLORS.length)]!,
       roomCode: null,
+      isCreator: false,
+      creatorToken: queryToken,
       isAlive: true,
       messageCount: 0,
       windowStart: Date.now(),
@@ -120,14 +126,14 @@ export class BoardWebSocketManager {
     });
 
     ws.on('message', async (data: Buffer | string) => {
-      // 1. Rate limiting: Max 60 messages per second per client
+      // 1. Rate limiting: Max 120 messages per second per client for silky smooth live drawing
       const now = Date.now();
       if (now - session.windowStart > 1000) {
         session.windowStart = now;
         session.messageCount = 1;
       } else {
         session.messageCount++;
-        if (session.messageCount > 60) {
+        if (session.messageCount > 120) {
           this.send(ws, {
             type: 'ERROR',
             message: 'Rate limit exceeded: too many socket messages',
@@ -177,11 +183,11 @@ export class BoardWebSocketManager {
 
     // If query room was provided in handshake URL, join immediately
     if (queryRoom && /^[A-Z0-9]{6}$/.test(queryRoom)) {
-      this.joinRoom(session, queryRoom);
+      this.joinRoom(session, queryRoom, queryToken);
     }
   }
 
-  private async joinRoom(session: ClientSession, roomCode: string) {
+  private async joinRoom(session: ClientSession, roomCode: string, providedCreatorToken?: string | null) {
     // Leave previous room if joined
     if (session.roomCode) {
       this.leaveRoom(session);
@@ -205,6 +211,16 @@ export class BoardWebSocketManager {
       return;
     }
 
+    // Verify creator status
+    const tokenToTest = providedCreatorToken || session.creatorToken;
+    const { isCreator, token } = await boardRoomService.verifyOrClaimCreator(roomCode, tokenToTest);
+    session.isCreator = isCreator;
+    session.creatorToken = token;
+
+    if (!this.roomPermissions.has(roomCode)) {
+      this.roomPermissions.set(roomCode, roomDetail.allowParticipantEditing ?? true);
+    }
+
     session.roomCode = roomCode;
 
     if (!this.roomClients.has(roomCode)) {
@@ -217,12 +233,14 @@ export class BoardWebSocketManager {
       id: session.userId,
       name: session.userName,
       color: session.userColor,
+      role: session.isCreator ? 'creator' : 'participant',
     };
 
     const activeUsers: ConnectedBoardUser[] = Array.from(clients).map(c => ({
       id: c.userId,
       name: c.userName,
       color: c.userColor,
+      role: c.isCreator ? 'creator' : 'participant',
     }));
 
     // Send full room state to the newly joined client
@@ -232,7 +250,9 @@ export class BoardWebSocketManager {
         code: roomDetail.code,
         title: roomDetail.title,
         template: roomDetail.template as BoardTemplate,
-        elementCount: roomDetail.elements.length,
+        elementCount: (this.pendingElements.get(roomCode) || roomDetail.elements).length,
+        allowParticipantEditing: this.roomPermissions.get(roomCode) ?? true,
+        creatorToken: session.isCreator ? token : undefined,
         createdAt: roomDetail.createdAt,
         expiresAt: roomDetail.expiresAt,
         isExpired: roomDetail.isExpired,
@@ -240,6 +260,8 @@ export class BoardWebSocketManager {
       elements: this.pendingElements.get(roomCode) || roomDetail.elements,
       users: activeUsers,
       currentUser,
+      isCreator: session.isCreator,
+      allowParticipantEditing: this.roomPermissions.get(roomCode) ?? true,
     });
 
     // Notify other peers in this room
@@ -261,6 +283,7 @@ export class BoardWebSocketManager {
       clients.delete(session);
       if (clients.size === 0) {
         this.roomClients.delete(roomCode);
+        this.roomPermissions.delete(roomCode);
         // Flush any pending elements to database
         this.flushPendingElements(roomCode);
       } else {
@@ -281,18 +304,21 @@ export class BoardWebSocketManager {
     session: ClientSession,
     msg: BoardSocketClientMessage
   ) {
+    const roomCode = session.roomCode;
+
     switch (msg.type) {
       case 'JOIN': {
         if (msg.userName) session.userName = msg.userName;
         if (msg.userColor) session.userColor = msg.userColor;
-        await this.joinRoom(session, msg.roomCode.toUpperCase().trim());
+        if (msg.creatorToken) session.creatorToken = msg.creatorToken;
+        await this.joinRoom(session, msg.roomCode.toUpperCase().trim(), msg.creatorToken);
         break;
       }
 
       case 'CURSOR_MOVE': {
-        if (!session.roomCode) return;
+        if (!roomCode) return;
         this.broadcastToRoom(
-          session.roomCode,
+          roomCode,
           {
             type: 'USER_CURSOR',
             userId: session.userId,
@@ -306,16 +332,109 @@ export class BoardWebSocketManager {
         break;
       }
 
+      case 'LIVE_DRAW': {
+        if (!roomCode) return;
+        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        if (!canEdit) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Drawing is currently locked by the room teacher.',
+          });
+          return;
+        }
+
+        // Broadcast active stroke chunks in real time
+        this.broadcastToRoom(
+          roomCode,
+          {
+            type: 'LIVE_DRAW_CHUNK',
+            userId: session.userId,
+            userName: session.userName,
+            strokeId: msg.strokeId,
+            points: msg.points,
+            color: msg.color,
+            strokeWidth: msg.strokeWidth,
+            isHighlighter: msg.isHighlighter,
+            isFinished: msg.isFinished,
+          },
+          session.userId
+        );
+        break;
+      }
+
+      case 'VIEWPORT_SYNC': {
+        if (!roomCode) return;
+        // Viewport sync from Teacher to participants
+        this.broadcastToRoom(
+          roomCode,
+          {
+            type: 'VIEWPORT_UPDATE',
+            userId: session.userId,
+            panX: msg.panX,
+            panY: msg.panY,
+            zoom: msg.zoom,
+          },
+          session.userId
+        );
+        break;
+      }
+
+      case 'ACTIVITY_BROADCAST': {
+        if (!roomCode) return;
+        this.broadcastToRoom(
+          roomCode,
+          {
+            type: 'ACTIVITY_INDICATOR',
+            userId: session.userId,
+            userName: session.userName,
+            action: msg.action,
+            details: msg.details,
+            timestamp: Date.now(),
+          },
+          session.userId
+        );
+        break;
+      }
+
+      case 'TOGGLE_PERMISSIONS': {
+        if (!roomCode) return;
+        if (!session.isCreator) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Only the room teacher can change editing permissions.',
+          });
+          return;
+        }
+
+        this.roomPermissions.set(roomCode, msg.allowParticipantEditing);
+        await boardRoomService.updatePermissions(roomCode, msg.allowParticipantEditing);
+
+        this.broadcastToRoom(roomCode, {
+          type: 'PERMISSIONS_UPDATED',
+          allowParticipantEditing: msg.allowParticipantEditing,
+        });
+        break;
+      }
+
       case 'ELEMENTS_UPDATE': {
-        if (!session.roomCode) return;
-        this.pendingElements.set(session.roomCode, msg.elements);
-        this.scheduleDebouncedSave(session.roomCode, msg.elements);
+        if (!roomCode) return;
+        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        if (!canEdit) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Editing is locked by the teacher.',
+          });
+          return;
+        }
+
+        this.pendingElements.set(roomCode, msg.elements as BoardElement[]);
+        this.scheduleDebouncedSave(roomCode, msg.elements as BoardElement[]);
 
         this.broadcastToRoom(
-          session.roomCode,
+          roomCode,
           {
             type: 'ELEMENTS_SYNC',
-            elements: msg.elements,
+            elements: msg.elements as BoardElement[],
           },
           session.userId
         );
@@ -323,12 +442,21 @@ export class BoardWebSocketManager {
       }
 
       case 'ELEMENT_CHANGE': {
-        if (!session.roomCode) return;
+        if (!roomCode) return;
+        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        if (!canEdit) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Editing is locked by the teacher.',
+          });
+          return;
+        }
+
         this.broadcastToRoom(
-          session.roomCode,
+          roomCode,
           {
             type: 'ELEMENT_SYNC',
-            element: msg.element,
+            element: msg.element as BoardElement,
             action: msg.action,
           },
           session.userId
@@ -337,11 +465,20 @@ export class BoardWebSocketManager {
       }
 
       case 'CLEAR_BOARD': {
-        if (!session.roomCode) return;
-        this.pendingElements.set(session.roomCode, []);
-        await boardRoomService.clearElements(session.roomCode);
+        if (!roomCode) return;
+        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        if (!canEdit) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Only authorized users can clear the board.',
+          });
+          return;
+        }
 
-        this.broadcastToRoom(session.roomCode, {
+        this.pendingElements.set(roomCode, []);
+        await boardRoomService.clearElements(roomCode);
+
+        this.broadcastToRoom(roomCode, {
           type: 'BOARD_CLEARED',
         });
         break;

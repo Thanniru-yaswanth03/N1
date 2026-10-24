@@ -18,6 +18,9 @@ export interface BoardRoomDetail {
   expiresAt: string;
   isExpired: boolean;
   timeRemainingSeconds: number;
+  allowParticipantEditing?: boolean;
+  creatorToken?: string;
+  isCreator?: boolean;
 }
 
 export interface LocalBoardRecord {
@@ -25,6 +28,22 @@ export interface LocalBoardRecord {
   title: string;
   template: BoardTemplate;
   lastVisited: string;
+}
+
+export function saveCreatorToken(code: string, token: string): void {
+  try {
+    localStorage.setItem(`n1_board_creator_${code.toUpperCase().trim()}`, token);
+  } catch {
+    // LocalStorage might be disabled
+  }
+}
+
+export function getStoredCreatorToken(code: string): string | null {
+  try {
+    return localStorage.getItem(`n1_board_creator_${code.toUpperCase().trim()}`);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -44,6 +63,10 @@ export async function createBoardRoom(
   const json = await res.json();
   if (!res.ok || !json.success) {
     throw new Error(json.error?.message || 'Failed to create Study Board room');
+  }
+
+  if (json.data.creatorToken) {
+    saveCreatorToken(json.data.code, json.data.creatorToken);
   }
 
   saveRecentBoard({
@@ -156,7 +179,9 @@ export interface BoardSocketCallbacks {
     room: BoardRoomSummary,
     elements: BoardElement[],
     users: ConnectedBoardUser[],
-    currentUser: ConnectedBoardUser
+    currentUser: ConnectedBoardUser,
+    isCreator: boolean,
+    allowParticipantEditing: boolean
   ) => void;
   onUserJoined: (user: ConnectedBoardUser) => void;
   onUserLeft: (userId: string) => void;
@@ -168,17 +193,53 @@ export interface BoardSocketCallbacks {
   onError: (message: string) => void;
   onConnectionChange: (connected: boolean) => void;
   onConnectionStatusChange?: (status: BoardConnectionStatus) => void;
+  onLiveDrawChunk?: (chunk: {
+    userId: string;
+    userName: string;
+    strokeId: string;
+    points: { x: number; y: number }[];
+    color: string;
+    strokeWidth: number;
+    isHighlighter?: boolean;
+    isFinished?: boolean;
+  }) => void;
+  onViewportUpdate?: (viewport: {
+    userId: string;
+    panX: number;
+    panY: number;
+    zoom: number;
+  }) => void;
+  onActivityIndicator?: (activity: {
+    userId: string;
+    userName: string;
+    action: string;
+    details?: string;
+    timestamp: number;
+  }) => void;
+  onPermissionsUpdated?: (allowParticipantEditing: boolean) => void;
 }
 
 export function connectBoardSocket(
   roomCode: string,
   callbacks: BoardSocketCallbacks,
-  userName?: string
+  userName?: string,
+  creatorToken?: string | null
 ): {
   sendCursor: (x: number, y: number) => void;
   sendElementsUpdate: (elements: BoardElement[]) => void;
   sendElementChange: (element: BoardElement, action: 'add' | 'update' | 'delete') => void;
   sendClearBoard: () => void;
+  sendLiveDraw: (
+    strokeId: string,
+    points: { x: number; y: number }[],
+    color: string,
+    strokeWidth: number,
+    isHighlighter?: boolean,
+    isFinished?: boolean
+  ) => void;
+  sendViewportSync: (panX: number, panY: number, zoom: number) => void;
+  sendActivityBroadcast: (action: string, details?: string) => void;
+  sendTogglePermissions: (allowParticipantEditing: boolean) => void;
   disconnect: () => void;
 } {
   let ws: WebSocket | null = null;
@@ -186,18 +247,22 @@ export function connectBoardSocket(
   let hasConnectedOnce = false;
   let reconnectTimeout: NodeJS.Timeout | null = null;
 
+  const resolvedToken = creatorToken || getStoredCreatorToken(roomCode);
+
   const wsUrl = (() => {
     try {
       const parsed = new URL(API_BASE);
       const isSecure = window.location.protocol === 'https:' || parsed.protocol === 'https:';
       const protocol = isSecure ? 'wss:' : 'ws:';
       const nameParam = userName ? `&name=${encodeURIComponent(userName)}` : '';
-      return `${protocol}//${parsed.host}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}`;
+      const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
+      return `${protocol}//${parsed.host}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}${tokenParam}`;
     } catch {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const cleanHost = API_BASE.replace(/^https?:\/\//, '').replace(/\/+$/, '');
       const nameParam = userName ? `&name=${encodeURIComponent(userName)}` : '';
-      return `${protocol}//${cleanHost}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}`;
+      const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
+      return `${protocol}//${cleanHost}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}${tokenParam}`;
     }
   })();
 
@@ -217,7 +282,17 @@ export function connectBoardSocket(
           const msg = JSON.parse(event.data) as BoardSocketServerMessage;
           switch (msg.type) {
             case 'ROOM_STATE':
-              callbacks.onRoomState(msg.room, msg.elements, msg.users, msg.currentUser);
+              if (msg.room.creatorToken) {
+                saveCreatorToken(roomCode, msg.room.creatorToken);
+              }
+              callbacks.onRoomState(
+                msg.room,
+                msg.elements,
+                msg.users,
+                msg.currentUser,
+                msg.isCreator,
+                msg.allowParticipantEditing
+              );
               break;
             case 'USER_JOINED':
               callbacks.onUserJoined(msg.user);
@@ -242,6 +317,18 @@ export function connectBoardSocket(
               break;
             case 'ERROR':
               callbacks.onError(msg.message);
+              break;
+            case 'LIVE_DRAW_CHUNK':
+              callbacks.onLiveDrawChunk?.(msg);
+              break;
+            case 'VIEWPORT_UPDATE':
+              callbacks.onViewportUpdate?.(msg);
+              break;
+            case 'ACTIVITY_INDICATOR':
+              callbacks.onActivityIndicator?.(msg);
+              break;
+            case 'PERMISSIONS_UPDATED':
+              callbacks.onPermissionsUpdated?.(msg.allowParticipantEditing);
               break;
           }
         } catch {
@@ -300,6 +387,33 @@ export function connectBoardSocket(
     },
     sendClearBoard: () => {
       send({ type: 'CLEAR_BOARD' });
+    },
+    sendLiveDraw: (
+      strokeId: string,
+      points: { x: number; y: number }[],
+      color: string,
+      strokeWidth: number,
+      isHighlighter?: boolean,
+      isFinished?: boolean
+    ) => {
+      send({
+        type: 'LIVE_DRAW',
+        strokeId,
+        points,
+        color,
+        strokeWidth,
+        isHighlighter,
+        isFinished,
+      });
+    },
+    sendViewportSync: (panX: number, panY: number, zoom: number) => {
+      send({ type: 'VIEWPORT_SYNC', panX, panY, zoom });
+    },
+    sendActivityBroadcast: (action: string, details?: string) => {
+      send({ type: 'ACTIVITY_BROADCAST', action, details });
+    },
+    sendTogglePermissions: (allowParticipantEditing: boolean) => {
+      send({ type: 'TOGGLE_PERMISSIONS', allowParticipantEditing });
     },
     disconnect: () => {
       isClosedManually = true;

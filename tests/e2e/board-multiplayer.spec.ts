@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('N1 Study Board Multi-Client Synchronization E2E Suite', () => {
-  test('Study Board: two-client collaboration, real-time sync, sharing, and export', async ({
+test.describe('N1 Study Board Multi-Client Synchronization & Classroom Mode E2E Suite', () => {
+  test('Collaborative Classroom: Teacher & Student roles, live synchronization, and permission locking', async ({
     browser,
   }) => {
-    // 1. Client A: Create a new Board room
+    // 1. Browser Context A: Teacher creates a new Study Board
     const contextA = await browser.newContext();
     await contextA.grantPermissions(['clipboard-read', 'clipboard-write']);
     const pageA = await contextA.newPage();
@@ -15,20 +15,51 @@ test.describe('N1 Study Board Multi-Client Synchronization E2E Suite', () => {
     await pageA.waitForURL(/\/board\/[A-Z0-9]{6}/);
     const roomCode = pageA.url().match(/\/board\/([A-Z0-9]{6})/)![1];
 
-    // Verify room code badge and connected status on Client A
+    // Verify room code badge and connected status on Teacher browser
     await expect(pageA.locator(`text=${roomCode}`).first()).toBeVisible();
     await expect(pageA.locator('text=CONNECTED').first()).toBeVisible();
 
-    // 2. Client B: Join same board room via URL in independent context
+    // Verify Teacher role indicator is visible on Creator screen
+    await expect(pageA.locator('text=Teacher').first()).toBeVisible();
+    await expect(pageA.locator('button', { hasText: 'Broadcast' }).or(pageA.locator('button', { hasText: 'Live View' }))).toBeVisible();
+
+    // 2. Browser Context B: Student joins the same board room via shared link
     const contextB = await browser.newContext();
     const pageB = await contextB.newPage();
     await pageB.goto(`/board/${roomCode}`);
 
-    // Verify Client B joins and connects successfully
+    // Verify Student joins and connects successfully
     await expect(pageB.locator(`text=${roomCode}`).first()).toBeVisible();
     await expect(pageB.locator('text=CONNECTED').first()).toBeVisible();
 
-    // 3. Test Share Modal on Client A
+    // Verify Student role indicator on Participant screen
+    await expect(pageB.locator('text=Student').first()).toBeVisible();
+    await expect(pageB.locator('text=Follow Teacher').or(pageB.locator('text=Snap to Teacher'))).toBeVisible();
+
+    // 3. Test Viewport / Presentation Mode Broadcast Toggle on Teacher
+    const broadcastBtn = pageA.locator('button', { hasText: 'Broadcast' });
+    if (await broadcastBtn.isVisible()) {
+      await broadcastBtn.click();
+      await expect(pageA.locator('button', { hasText: 'Live View' })).toBeVisible();
+    }
+
+    // 4. Test Teacher toggling Student Editing lock
+    const editToggleBtn = pageA.locator('button', { hasText: 'Student Edits: ON' });
+    if (await editToggleBtn.isVisible()) {
+      await editToggleBtn.click();
+      // Teacher sees LOCKED state
+      await expect(pageA.locator('text=Student Edits: LOCKED')).toBeVisible();
+
+      // Student screen immediately shows "View Only" lock badge without refresh
+      await expect(pageB.locator('text=View Only').first()).toBeVisible();
+      await expect(pageB.locator('text=Teacher has locked participant editing')).toBeVisible();
+
+      // Unlock back
+      await pageA.locator('button', { hasText: 'Student Edits: LOCKED' }).click();
+      await expect(pageA.locator('text=Student Edits: ON')).toBeVisible();
+    }
+
+    // 5. Test Share Modal on Teacher
     const shareBtn = pageA.locator('header button', { hasText: 'Share' });
     await expect(shareBtn).toBeVisible();
     await shareBtn.click();
@@ -43,7 +74,7 @@ test.describe('N1 Study Board Multi-Client Synchronization E2E Suite', () => {
     // Close Share Modal
     await pageA.keyboard.press('Escape');
 
-    // 4. Test Export dropdown on Client A
+    // 6. Test Export dropdown on Teacher
     const exportBtn = pageA.locator('header button', { hasText: 'Export' });
     await expect(exportBtn).toBeVisible();
     await exportBtn.click();
@@ -55,6 +86,11 @@ test.describe('N1 Study Board Multi-Client Synchronization E2E Suite', () => {
 
     // Close Export menu
     await pageA.keyboard.press('Escape');
+
+    // 7. Test Mobile Viewport Layout
+    await pageB.setViewportSize({ width: 375, height: 667 });
+    await expect(pageB.locator(`text=${roomCode}`).first()).toBeVisible();
+    await expect(pageB.locator('canvas').first()).toBeVisible();
 
     // Cleanup contexts
     await pageA.close();

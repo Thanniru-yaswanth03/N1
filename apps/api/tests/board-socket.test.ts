@@ -286,4 +286,299 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
     expect(stateB2.type).toBe('ROOM_STATE');
     expect(userJoinedA2.user.name).toBe('BobReconnected');
   });
+
+  it('broadcasts live drawing chunks chunk-by-chunk in real time', async () => {
+    const room = await boardRoomService.createRoom({
+      title: 'SocketTest LiveDraw',
+      template: 'blank',
+      expiresInHours: 2,
+    });
+
+    // Creator connects with creatorToken
+    const wsTeacher = new WebSocket(`ws://localhost:${port}/ws/board?token=${room.creatorToken}`);
+    activeSockets.push(wsTeacher);
+    await new Promise<void>(resolve => wsTeacher.on('open', resolve));
+
+    const teacherStatePromise = waitForMessage(wsTeacher, 'ROOM_STATE');
+    wsTeacher.send(
+      JSON.stringify({
+        type: 'JOIN',
+        roomCode: room.code,
+        userName: 'Teacher Alice',
+        creatorToken: room.creatorToken,
+      })
+    );
+    const teacherState = await teacherStatePromise;
+    expect(teacherState.isCreator).toBe(true);
+
+    // Student connects
+    const wsStudent = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsStudent);
+    await new Promise<void>(resolve => wsStudent.on('open', resolve));
+
+    const studentStatePromise = waitForMessage(wsStudent, 'ROOM_STATE');
+    wsStudent.send(
+      JSON.stringify({
+        type: 'JOIN',
+        roomCode: room.code,
+        userName: 'Student Bob',
+      })
+    );
+    const studentState = await studentStatePromise;
+    expect(studentState.isCreator).toBe(false);
+
+    // Teacher streams an in-progress drawing stroke
+    const chunkPromise = waitForMessage(wsStudent, 'LIVE_DRAW_CHUNK');
+    wsTeacher.send(
+      JSON.stringify({
+        type: 'LIVE_DRAW',
+        strokeId: 'stroke_live_99',
+        points: [{ x: 50, y: 50 }, { x: 55, y: 55 }],
+        color: '#00f0ff',
+        strokeWidth: 4,
+        isHighlighter: false,
+        isFinished: false,
+      })
+    );
+
+    const receivedChunk = await chunkPromise;
+    expect(receivedChunk.type).toBe('LIVE_DRAW_CHUNK');
+    expect(receivedChunk.strokeId).toBe('stroke_live_99');
+    expect(receivedChunk.points).toHaveLength(2);
+    expect(receivedChunk.isFinished).toBe(false);
+
+    // Teacher completes the stroke
+    const finishPromise = waitForMessage(wsStudent, 'LIVE_DRAW_CHUNK');
+    wsTeacher.send(
+      JSON.stringify({
+        type: 'LIVE_DRAW',
+        strokeId: 'stroke_live_99',
+        points: [{ x: 60, y: 65 }],
+        color: '#00f0ff',
+        strokeWidth: 4,
+        isFinished: true,
+      })
+    );
+
+    const finishChunk = await finishPromise;
+    expect(finishChunk.isFinished).toBe(true);
+  });
+
+  it('synchronizes classroom viewport in presentation mode and broadcasts activity indicators', async () => {
+    const room = await boardRoomService.createRoom({
+      title: 'SocketTest Viewport',
+      template: 'blank',
+      expiresInHours: 2,
+    });
+
+    const wsTeacher = new WebSocket(`ws://localhost:${port}/ws/board?token=${room.creatorToken}`);
+    activeSockets.push(wsTeacher);
+    await new Promise<void>(resolve => wsTeacher.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsTeacher.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Teacher', creatorToken: room.creatorToken }));
+      wsTeacher.once('message', () => resolve());
+    });
+
+    const wsStudent = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsStudent);
+    await new Promise<void>(resolve => wsStudent.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsStudent.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Student' }));
+      wsStudent.once('message', () => resolve());
+    });
+
+    // 1. Viewport sync
+    const viewportPromise = waitForMessage(wsStudent, 'VIEWPORT_UPDATE');
+    wsTeacher.send(
+      JSON.stringify({
+        type: 'VIEWPORT_SYNC',
+        panX: 250,
+        panY: -120,
+        zoom: 1.4,
+      })
+    );
+
+    const vpUpdate = await viewportPromise;
+    expect(vpUpdate.type).toBe('VIEWPORT_UPDATE');
+    expect(vpUpdate.panX).toBe(250);
+    expect(vpUpdate.panY).toBe(-120);
+    expect(vpUpdate.zoom).toBe(1.4);
+
+    // 2. Activity indicator broadcast
+    const activityPromise = waitForMessage(wsStudent, 'ACTIVITY_INDICATOR');
+    wsTeacher.send(
+      JSON.stringify({
+        type: 'ACTIVITY_BROADCAST',
+        action: 'updated Key Concepts',
+        details: 'Added chapter 3 notes',
+      })
+    );
+
+    const actIndicator = await activityPromise;
+    expect(actIndicator.type).toBe('ACTIVITY_INDICATOR');
+    expect(actIndicator.action).toBe('updated Key Concepts');
+    expect(actIndicator.details).toBe('Added chapter 3 notes');
+  });
+
+  it('enforces teacher permissions: toggling locks and blocking unauthorized student edits', async () => {
+    const room = await boardRoomService.createRoom({
+      title: 'SocketTest Permissions',
+      template: 'blank',
+      expiresInHours: 2,
+    });
+
+    const wsTeacher = new WebSocket(`ws://localhost:${port}/ws/board?token=${room.creatorToken}`);
+    activeSockets.push(wsTeacher);
+    await new Promise<void>(resolve => wsTeacher.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsTeacher.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Teacher', creatorToken: room.creatorToken }));
+      wsTeacher.once('message', () => resolve());
+    });
+
+    const wsStudent = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsStudent);
+    await new Promise<void>(resolve => wsStudent.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsStudent.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Student' }));
+      wsStudent.once('message', () => resolve());
+    });
+
+    // Teacher locks participant editing
+    const permPromise = waitForMessage(wsStudent, 'PERMISSIONS_UPDATED');
+    wsTeacher.send(
+      JSON.stringify({
+        type: 'TOGGLE_PERMISSIONS',
+        allowParticipantEditing: false,
+      })
+    );
+
+    const permMsg = await permPromise;
+    expect(permMsg.type).toBe('PERMISSIONS_UPDATED');
+    expect(permMsg.allowParticipantEditing).toBe(false);
+
+    // Student attempts unauthorized edit -> blocked by server
+    const errorPromise = waitForMessage(wsStudent, 'ERROR');
+    wsStudent.send(
+      JSON.stringify({
+        type: 'ELEMENT_CHANGE',
+        action: 'add',
+        element: {
+          id: 'unauthorized_note_1',
+          type: 'sticky',
+          x: 100,
+          y: 100,
+          text: 'Hacked note',
+          color: '#fbbf24',
+        },
+      })
+    );
+
+    const errorMsg = await errorPromise;
+    expect(errorMsg.type).toBe('ERROR');
+    expect(errorMsg.message).toContain('locked');
+  });
+
+  it('synchronizes sticky notes and rich shapes across participants without schema rejection', async () => {
+    const room = await boardRoomService.createRoom({
+      title: 'SocketTest StickyShapes',
+      template: 'blank',
+      expiresInHours: 2,
+    });
+
+    const wsA = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsA);
+    await new Promise<void>(resolve => wsA.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsA.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Alice' }));
+      wsA.once('message', () => resolve());
+    });
+
+    const wsB = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsB);
+    await new Promise<void>(resolve => wsB.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsB.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Bob' }));
+      wsB.once('message', () => resolve());
+    });
+
+    // Send sticky note element
+    const stickyNote: BoardElement = {
+      id: 'sticky_note_1',
+      type: 'sticky',
+      x: 120,
+      y: 180,
+      width: 200,
+      height: 160,
+      color: '#fbbf24',
+      text: 'Remember to complete Homework #4 by Friday',
+    };
+
+    const stickyPromise = waitForMessage(wsB, 'ELEMENT_SYNC');
+    wsA.send(
+      JSON.stringify({
+        type: 'ELEMENT_CHANGE',
+        action: 'add',
+        element: stickyNote,
+      })
+    );
+
+    const receivedSticky = await stickyPromise;
+    expect(receivedSticky.type).toBe('ELEMENT_SYNC');
+    expect(receivedSticky.element.id).toBe('sticky_note_1');
+    expect(receivedSticky.element.type).toBe('sticky');
+    expect(receivedSticky.element.text).toContain('Homework #4');
+  });
+
+  it('strictly isolates rooms so actions in Room 1 never leak to Room 2', async () => {
+    const room1 = await boardRoomService.createRoom({ title: 'Room One', template: 'blank' });
+    const room2 = await boardRoomService.createRoom({ title: 'Room Two', template: 'blank' });
+
+    const wsRoom1 = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsRoom1);
+    await new Promise<void>(resolve => wsRoom1.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsRoom1.send(JSON.stringify({ type: 'JOIN', roomCode: room1.code, userName: 'UserRoom1' }));
+      wsRoom1.once('message', () => resolve());
+    });
+
+    const wsRoom2 = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsRoom2);
+    await new Promise<void>(resolve => wsRoom2.on('open', resolve));
+    await new Promise<void>(resolve => {
+      wsRoom2.send(JSON.stringify({ type: 'JOIN', roomCode: room2.code, userName: 'UserRoom2' }));
+      wsRoom2.once('message', () => resolve());
+    });
+
+    let room2ReceivedLeak = false;
+    wsRoom2.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'ELEMENT_SYNC' || msg.type === 'LIVE_DRAW_CHUNK') {
+          room2ReceivedLeak = true;
+        }
+      } catch {
+        // ignore
+      }
+    });
+
+    // Send action in Room 1
+    wsRoom1.send(
+      JSON.stringify({
+        type: 'ELEMENT_CHANGE',
+        action: 'add',
+        element: {
+          id: 'isolated_secret_elem',
+          type: 'text',
+          x: 10,
+          y: 20,
+          text: 'Private to Room 1',
+          color: '#ffffff',
+        },
+      })
+    );
+
+    // Wait 500ms to verify Room 2 received no events
+    await new Promise(r => setTimeout(r, 500));
+    expect(room2ReceivedLeak).toBe(false);
+  });
 });

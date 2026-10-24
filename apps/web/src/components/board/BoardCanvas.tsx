@@ -4,6 +4,17 @@ import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { BoardElement, BoardPoint, BoardShapeType, ConnectedBoardUser } from '@n1/shared';
 import { CanvasTool } from './BoardToolbar';
 
+export interface RemoteLiveStroke {
+  userId: string;
+  userName: string;
+  userColor?: string;
+  strokeId: string;
+  points: BoardPoint[];
+  color: string;
+  strokeWidth: number;
+  isHighlighter?: boolean;
+}
+
 export interface BoardCanvasProps {
   elements: BoardElement[];
   setElements: React.Dispatch<React.SetStateAction<BoardElement[]>>;
@@ -19,6 +30,19 @@ export interface BoardCanvasProps {
   onElementsChange?: (elements: BoardElement[]) => void;
   onCursorMove?: (x: number, y: number) => void;
   onHistoryPush?: (elements: BoardElement[]) => void;
+  canEdit?: boolean;
+  isCreator?: boolean;
+  remoteLiveStrokes?: Map<string, RemoteLiveStroke>;
+  onLiveDrawChunk?: (
+    strokeId: string,
+    points: BoardPoint[],
+    color: string,
+    strokeWidth: number,
+    isHighlighter?: boolean,
+    isFinished?: boolean
+  ) => void;
+  onViewportChange?: (pan: { x: number; y: number }, zoom: number) => void;
+  externalViewport?: { pan: { x: number; y: number }; zoom: number } | null;
 }
 
 export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -79,6 +103,12 @@ export function BoardCanvas({
   onElementsChange,
   onCursorMove,
   onHistoryPush,
+  canEdit = true,
+  isCreator = false,
+  remoteLiveStrokes,
+  onLiveDrawChunk,
+  onViewportChange,
+  externalViewport,
 }: BoardCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +119,23 @@ export function BoardCanvas({
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isSpacePressed, setIsSpacePressed] = useState(false);
+
+  // Live drawing tracking
+  const strokeIdRef = useRef<string>('');
+  const lastDrawEmitRef = useRef<number>(0);
+  const isCreatorRef = useRef<boolean>(isCreator);
+
+  useEffect(() => {
+    isCreatorRef.current = isCreator;
+  }, [isCreator]);
+
+  // External viewport sync (e.g. participant following teacher)
+  useEffect(() => {
+    if (externalViewport) {
+      setPan(externalViewport.pan);
+      setZoom(() => externalViewport.zoom);
+    }
+  }, [externalViewport, setZoom]);
 
   // Multi-touch & pointer tracking
   const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -785,7 +832,47 @@ export function BoardCanvas({
             const content = el.content || 'Double click to edit';
             const lines = wrapText(ctx, content, el.width - 24);
             lines.slice(0, 8).forEach((line, idx) => {
-              ctx.fillText(line, 12, 30 + idx * 18);
+              const yPos = 30 + idx * 18;
+              const checkMatch = line.match(/^(\s*[-*]?\s*)\[([ xX])\]\s*(.*)$/);
+              if (checkMatch) {
+                const isChecked = checkMatch[2]?.toLowerCase() === 'x';
+                const labelText = checkMatch[3] || '';
+                ctx.save();
+                if (isChecked) {
+                  ctx.fillStyle = '#10b981';
+                  ctx.beginPath();
+                  ctx.roundRect(12, yPos - 11, 12, 12, 3);
+                  ctx.fill();
+                  ctx.strokeStyle = '#ffffff';
+                  ctx.lineWidth = 1.5;
+                  ctx.beginPath();
+                  ctx.moveTo(14.5, yPos - 5);
+                  ctx.lineTo(17, yPos - 2.5);
+                  ctx.lineTo(21, yPos - 8.5);
+                  ctx.stroke();
+                  ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+                  ctx.fillText(labelText, 28, yPos);
+                  // Strike-through
+                  const tWidth = ctx.measureText(labelText).width;
+                  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                  ctx.lineWidth = 1;
+                  ctx.beginPath();
+                  ctx.moveTo(28, yPos - 4);
+                  ctx.lineTo(28 + tWidth, yPos - 4);
+                  ctx.stroke();
+                } else {
+                  ctx.strokeStyle = el.color || '#fbbf24';
+                  ctx.lineWidth = 1.5;
+                  ctx.beginPath();
+                  ctx.roundRect(12, yPos - 11, 12, 12, 3);
+                  ctx.stroke();
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillText(labelText, 28, yPos);
+                }
+                ctx.restore();
+              } else {
+                ctx.fillText(line, 12, yPos);
+              }
             });
           }
           break;
@@ -1026,6 +1113,28 @@ export function BoardCanvas({
       ctx.restore();
     }
 
+    // Render remote in-progress live drawing strokes from other users (Teacher/Peers)
+    if (remoteLiveStrokes && remoteLiveStrokes.size > 0) {
+      remoteLiveStrokes.forEach(remoteStroke => {
+        if (!remoteStroke.points || remoteStroke.points.length < 2) return;
+        ctx.save();
+        ctx.strokeStyle = remoteStroke.color;
+        ctx.lineWidth = remoteStroke.isHighlighter ? 14 : remoteStroke.strokeWidth;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        if (remoteStroke.isHighlighter) {
+          ctx.globalAlpha = 0.35;
+        }
+        ctx.beginPath();
+        ctx.moveTo(remoteStroke.points[0]?.x || 0, remoteStroke.points[0]?.y || 0);
+        for (let i = 1; i < remoteStroke.points.length; i++) {
+          ctx.lineTo(remoteStroke.points[i]?.x || 0, remoteStroke.points[i]?.y || 0);
+        }
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+
     // Render online peer cursors
     peerUsers.forEach(peer => {
       if (peer.cursor) {
@@ -1067,6 +1176,7 @@ export function BoardCanvas({
     isElementInBox,
     pan,
     peerUsers,
+    remoteLiveStrokes,
     selectedIds,
     strokeWidth,
     zoom,
@@ -1088,12 +1198,24 @@ export function BoardCanvas({
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
       const zoomFactor = e.deltaY < 0 ? 1.05 : 0.95;
-      setZoom(prev => Math.min(3.0, Math.max(0.25, prev * zoomFactor)));
+      setZoom(prev => {
+        const nextZoom = Math.min(3.0, Math.max(0.25, prev * zoomFactor));
+        if (isCreatorRef.current) {
+          onViewportChange?.(pan, nextZoom);
+        }
+        return nextZoom;
+      });
     } else {
-      setPan(prev => ({
-        x: prev.x - e.deltaX,
-        y: prev.y - e.deltaY,
-      }));
+      setPan(prev => {
+        const nextPan = {
+          x: prev.x - e.deltaX,
+          y: prev.y - e.deltaY,
+        };
+        if (isCreatorRef.current) {
+          onViewportChange?.(nextPan, zoom);
+        }
+        return nextPan;
+      });
     }
   };
 
@@ -1122,6 +1244,13 @@ export function BoardCanvas({
       } catch (_err) {
         void _err;
       }
+    }
+
+    // Read-only / viewer mode for participants when editing is locked
+    if (!canEdit) {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      return;
     }
 
     // If currently editing text and clicked outside editor, commit changes cleanly
@@ -1166,6 +1295,27 @@ export function BoardCanvas({
       // 2. Check if clicking on an element
       const hit = findElementAt(world);
       if (hit) {
+        // Quick toggle for interactive checklist items if clicking near checkbox
+        if (hit.type === 'sticky' && hit.content && (hit.content.includes('[ ]') || hit.content.includes('[x]'))) {
+          const localX = world.x - hit.x;
+          if (localX >= 8 && localX <= 32) {
+            let nextContent = hit.content;
+            if (nextContent.includes('[ ]')) {
+              nextContent = nextContent.replace('[ ]', '[x]');
+            } else if (nextContent.includes('[x]')) {
+              nextContent = nextContent.replace('[x]', '[ ]');
+            }
+            setElements(prev => {
+              const updated = prev.map(el => (el.id === hit.id ? { ...el, content: nextContent, updatedAt: Date.now() } : el));
+              elementsRef.current = updated;
+              onElementsChange?.(updated);
+              onHistoryPush?.(updated);
+              return updated;
+            });
+            return;
+          }
+        }
+
         if (e.shiftKey || e.ctrlKey || e.metaKey) {
           // Toggle in multi-selection
           setSelectedIds(prev => {
@@ -1292,6 +1442,19 @@ export function BoardCanvas({
     setIsDrawing(true);
     setDrawStart(world);
     setCurrentPoints([world]);
+    if (activeTool === 'pen' || activeTool === 'highlighter') {
+      const newStrokeId = `strk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      strokeIdRef.current = newStrokeId;
+      lastDrawEmitRef.current = Date.now();
+      onLiveDrawChunk?.(
+        newStrokeId,
+        [world],
+        activeColor,
+        activeTool === 'highlighter' ? 14 : strokeWidth,
+        activeTool === 'highlighter',
+        false
+      );
+    }
   };
 
   // Pointer Move Handler
@@ -1319,10 +1482,14 @@ export function BoardCanvas({
     onCursorMove?.(world.x, world.y);
 
     if (isPanning) {
-      setPan({
+      const nextPan = {
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y,
-      });
+      };
+      setPan(nextPan);
+      if (isCreatorRef.current) {
+        onViewportChange?.(nextPan, zoom);
+      }
       return;
     }
 
@@ -1425,6 +1592,18 @@ export function BoardCanvas({
     if (isDrawing) {
       if (activeTool === 'pen' || activeTool === 'highlighter') {
         setCurrentPoints(prev => [...prev, world]);
+        const now = Date.now();
+        if (now - lastDrawEmitRef.current >= 25 && strokeIdRef.current) {
+          lastDrawEmitRef.current = now;
+          onLiveDrawChunk?.(
+            strokeIdRef.current,
+            [world],
+            activeColor,
+            activeTool === 'highlighter' ? 14 : strokeWidth,
+            activeTool === 'highlighter',
+            false
+          );
+        }
       } else {
         setCurrentPoints([world]);
       }
@@ -1518,7 +1697,7 @@ export function BoardCanvas({
         }));
 
         const newStroke: BoardElement = {
-          id: `stroke_${Date.now()}`,
+          id: strokeIdRef.current || `stroke_${Date.now()}`,
           type: 'stroke',
           x: minX,
           y: minY,
@@ -1537,6 +1716,18 @@ export function BoardCanvas({
           onHistoryPush?.(next);
           return next;
         });
+      }
+
+      if (strokeIdRef.current) {
+        onLiveDrawChunk?.(
+          strokeIdRef.current,
+          [],
+          activeColor,
+          activeTool === 'highlighter' ? 14 : strokeWidth,
+          activeTool === 'highlighter',
+          true
+        );
+        strokeIdRef.current = '';
       }
     } else if (activeTool === 'shape') {
       const endPoint = currentPoints[currentPoints.length - 1] || drawStart;
@@ -1712,6 +1903,32 @@ export function BoardCanvas({
                 title="Edit Text (Enter or Double-click)"
               >
                 <span>✏️ Edit</span>
+              </button>
+            )}
+
+            {/* Quick Checklist Toggle button for checklist sticky notes */}
+            {selectedElement && selectedElement.content && (selectedElement.content.includes('[ ]') || selectedElement.content.includes('[x]')) && (
+              <button
+                type="button"
+                onClick={() => {
+                  let text = selectedElement.content || '';
+                  if (text.includes('[ ]')) {
+                    text = text.replace('[ ]', '[x]');
+                  } else if (text.includes('[x]')) {
+                    text = text.replace('[x]', '[ ]');
+                  }
+                  setElements(prev => {
+                    const next = prev.map(el => (el.id === selectedElement.id ? { ...el, content: text, updatedAt: Date.now() } : el));
+                    elementsRef.current = next;
+                    onElementsChange?.(next);
+                    onHistoryPush?.(next);
+                    return next;
+                  });
+                }}
+                className="px-2 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                title="Toggle next checklist item"
+              >
+                <span>✅ Check item</span>
               </button>
             )}
 

@@ -17,13 +17,14 @@ import {
   clearBoardElements,
   BoardRoomDetail,
   BoardConnectionStatus,
+  getStoredCreatorToken,
 } from '../../../lib/board-client';
 import {
   exportBoardAsPng,
   exportBoardAsSvg,
   exportBoardAsJson,
 } from '../../../lib/board-export';
-import { BoardCanvas } from '../../../components/board/BoardCanvas';
+import { BoardCanvas, RemoteLiveStroke } from '../../../components/board/BoardCanvas';
 import { BoardToolbar, CanvasTool } from '../../../components/board/BoardToolbar';
 import { BoardHeader } from '../../../components/board/BoardHeader';
 import { ShareModal } from '../../../components/board/ShareModal';
@@ -34,11 +35,28 @@ export default function StudyBoardRoomPage() {
   const router = useRouter();
   const roomCode = ((params?.code as string) || '').toUpperCase().trim();
 
-  // Room metadata
+  // Room metadata & Role state
   const [room, setRoom] = useState<BoardRoomDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isExpired, setIsExpired] = useState(false);
+  const [isCreator, setIsCreator] = useState<boolean>(false);
+  const [allowParticipantEditing, setAllowParticipantEditing] = useState<boolean>(true);
+
+  // Classroom / Presentation mode
+  const [isBroadcastingViewport, setIsBroadcastingViewport] = useState<boolean>(false);
+  const [isFollowingTeacher, setIsFollowingTeacher] = useState<boolean>(true);
+  const [remoteViewport, setRemoteViewport] = useState<{ panX: number; panY: number; zoom: number } | null>(null);
+
+  // Live streaming strokes & activity
+  const [remoteLiveStrokes, setRemoteLiveStrokes] = useState<Map<string, RemoteLiveStroke>>(new Map());
+  const [recentActivity, setRecentActivity] = useState<{
+    userName: string;
+    action: string;
+    details?: string;
+    timestamp: number;
+  } | null>(null);
+  const activityTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Active canvas state
   const [elements, setElements] = useState<BoardElement[]>([]);
@@ -64,6 +82,9 @@ export default function StudyBoardRoomPage() {
   // Modals
   const [shareModalOpen, setShareModalOpen] = useState(false);
 
+  // Effective permission
+  const canEdit = isCreator || allowParticipantEditing;
+
   // 1. Initial Room Load via REST
   useEffect(() => {
     if (!roomCode) return;
@@ -71,6 +92,8 @@ export default function StudyBoardRoomPage() {
     let mounted = true;
     setLoading(true);
     setLoadError(null);
+
+    const storedToken = getStoredCreatorToken(roomCode);
 
     fetchBoardRoom(roomCode)
       .then(data => {
@@ -82,6 +105,12 @@ export default function StudyBoardRoomPage() {
         }
 
         setRoom(data);
+        if (data.allowParticipantEditing !== undefined) {
+          setAllowParticipantEditing(data.allowParticipantEditing);
+        }
+        if (data.isCreator || !!storedToken) {
+          setIsCreator(true);
+        }
         const initElems = data.elements || [];
         setElements(initElems);
         setHistory([initElems]);
@@ -106,21 +135,50 @@ export default function StudyBoardRoomPage() {
     if (!roomCode || isExpired || loading) return;
 
     const socket = connectBoardSocket(roomCode, {
-      onRoomState: (_roomData, initialElements, users, me) => {
+      onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing) => {
         setElements(initialElements);
         setPeerUsers(users);
         setCurrentUser(me);
         setHistory([initialElements]);
         setHistoryIndex(0);
+        historyIndexRef.current = 0;
+        historyRef.current = [initialElements];
+        if (allowEditing !== undefined) {
+          setAllowParticipantEditing(allowEditing);
+        }
+        if (isCreatorFlag !== undefined) {
+          setIsCreator(isCreatorFlag);
+        } else if (me?.role === 'creator') {
+          setIsCreator(true);
+        }
       },
       onUserJoined: user => {
         setPeerUsers(prev => {
           if (prev.some(u => u.id === user.id)) return prev;
           return [...prev, user];
         });
+        setRecentActivity({
+          userName: user.name,
+          action: 'joined the study room',
+          timestamp: Date.now(),
+        });
+        if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+        activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
       },
       onUserLeft: userId => {
-        setPeerUsers(prev => prev.filter(u => u.id !== userId));
+        setPeerUsers(prev => {
+          const departing = prev.find(u => u.id === userId);
+          if (departing) {
+            setRecentActivity({
+              userName: departing.name,
+              action: 'left the study room',
+              timestamp: Date.now(),
+            });
+            if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+            activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
+          }
+          return prev.filter(u => u.id !== userId);
+        });
       },
       onUserCursor: (userId, _userName, _userColor, x, y) => {
         setPeerUsers(prev =>
@@ -146,8 +204,52 @@ export default function StudyBoardRoomPage() {
           }
         });
       },
+      onLiveDrawChunk: chunk => {
+        setRemoteLiveStrokes(prev => {
+          const next = new Map(prev);
+          if (chunk.isFinished) {
+            next.delete(chunk.strokeId);
+          } else {
+            next.set(chunk.strokeId, {
+              userId: chunk.userId,
+              userName: chunk.userName,
+              userColor: '#00f0ff',
+              strokeId: chunk.strokeId,
+              points: chunk.points,
+              isHighlighter: Boolean(chunk.isHighlighter),
+              color: chunk.color,
+              strokeWidth: chunk.strokeWidth,
+            });
+          }
+          return next;
+        });
+      },
+      onViewportUpdate: vp => {
+        if (isFollowingTeacher) {
+          setRemoteViewport({ panX: vp.panX, panY: vp.panY, zoom: vp.zoom });
+        }
+      },
+      onActivityIndicator: act => {
+        setRecentActivity({ userName: act.userName, action: act.action, details: act.details, timestamp: act.timestamp });
+        if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+        activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
+      },
+      onPermissionsUpdated: allowed => {
+        setAllowParticipantEditing(allowed);
+        setRecentActivity({
+          userName: 'Teacher',
+          action: allowed ? 'unlocked student editing' : 'locked student editing to view-only',
+          timestamp: Date.now(),
+        });
+        if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+        activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
+      },
       onBoardCleared: () => {
         setElements([]);
+        setHistory([[]]);
+        setHistoryIndex(0);
+        historyIndexRef.current = 0;
+        historyRef.current = [[]];
       },
       onRoomExpired: () => {
         setIsExpired(true);
@@ -168,8 +270,9 @@ export default function StudyBoardRoomPage() {
 
     return () => {
       socket.disconnect();
+      if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
     };
-  }, [roomCode, isExpired, loading]);
+  }, [roomCode, isExpired, loading, isFollowingTeacher]);
 
   // Push history state with deduplication to prevent dead undo clicks
   const handleHistoryPush = useCallback(
@@ -203,6 +306,7 @@ export default function StudyBoardRoomPage() {
 
   // Undo
   const handleUndo = useCallback(() => {
+    if (!canEdit) return;
     const curIdx = historyIndexRef.current;
     const hist = historyRef.current;
     if (curIdx > 0) {
@@ -216,10 +320,11 @@ export default function StudyBoardRoomPage() {
         syncBoardElements(roomCode, target);
       }
     }
-  }, [roomCode]);
+  }, [roomCode, canEdit]);
 
   // Redo
   const handleRedo = useCallback(() => {
+    if (!canEdit) return;
     const curIdx = historyIndexRef.current;
     const hist = historyRef.current;
     if (curIdx < hist.length - 1) {
@@ -233,7 +338,7 @@ export default function StudyBoardRoomPage() {
         syncBoardElements(roomCode, target);
       }
     }
-  }, [roomCode]);
+  }, [roomCode, canEdit]);
 
   // Global Keyboard Shortcuts (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z)
   useEffect(() => {
@@ -270,9 +375,43 @@ export default function StudyBoardRoomPage() {
   // Canvas change handler (syncs to peers & backup REST)
   const handleElementsChange = useCallback(
     (nextElements: BoardElement[]) => {
+      if (!canEdit) return;
       socketRef.current?.sendElementsUpdate(nextElements);
     },
-    []
+    [canEdit]
+  );
+
+  // Live drawing chunk streamer
+  const handleLiveDrawChunk = useCallback(
+    (
+      strokeId: string,
+      points: { x: number; y: number; pressure?: number }[],
+      color: string,
+      strokeWidth: number,
+      isHighlighter?: boolean,
+      isFinished?: boolean
+    ) => {
+      if (!canEdit) return;
+      socketRef.current?.sendLiveDraw(
+        strokeId,
+        points.map(p => ({ x: p.x, y: p.y })),
+        color,
+        strokeWidth,
+        isHighlighter,
+        isFinished
+      );
+    },
+    [canEdit]
+  );
+
+  // Viewport change streaming
+  const handleViewportChange = useCallback(
+    (pan: { x: number; y: number }, z: number) => {
+      if (isCreator && isBroadcastingViewport) {
+        socketRef.current?.sendViewportSync(pan.x, pan.y, z);
+      }
+    },
+    [isCreator, isBroadcastingViewport]
   );
 
   // Cursor broadcast
@@ -282,24 +421,51 @@ export default function StudyBoardRoomPage() {
 
   // Clear board
   const handleClear = useCallback(() => {
+    if (!canEdit) return;
     setElements([]);
     handleHistoryPush([]);
     socketRef.current?.sendClearBoard();
+    socketRef.current?.sendActivityBroadcast('cleared the entire board');
     clearBoardElements(roomCode);
-  }, [roomCode, handleHistoryPush]);
+  }, [roomCode, handleHistoryPush, canEdit]);
 
   // Switch / Apply Template cleanly without merging/overlapping
   const handleSelectTemplate = useCallback(
     (t: BoardTemplate) => {
+      if (!canEdit) return;
       const newItems = getTemplateElements(t);
       setElements(newItems);
       handleHistoryPush(newItems);
       socketRef.current?.sendElementsUpdate(newItems);
+      socketRef.current?.sendActivityBroadcast(`applied ${t} template`);
       syncBoardElements(roomCode, newItems);
       setRoom(prev => (prev ? { ...prev, template: t } : null));
     },
-    [roomCode, handleHistoryPush]
+    [roomCode, handleHistoryPush, canEdit]
   );
+
+  // Teacher controls
+  const handleTogglePermissions = useCallback(() => {
+    if (!isCreator) return;
+    const next = !allowParticipantEditing;
+    setAllowParticipantEditing(next);
+    socketRef.current?.sendTogglePermissions(next);
+  }, [isCreator, allowParticipantEditing]);
+
+  const handleToggleBroadcastViewport = useCallback(() => {
+    if (!isCreator) return;
+    setIsBroadcastingViewport(prev => {
+      const next = !prev;
+      if (next) {
+        socketRef.current?.sendActivityBroadcast('started broadcasting live screen view');
+      }
+      return next;
+    });
+  }, [isCreator]);
+
+  const handleToggleFollowTeacher = useCallback(() => {
+    setIsFollowingTeacher(prev => !prev);
+  }, []);
 
   // ── Render Expired State ──
   if (isExpired) {
@@ -381,6 +547,14 @@ export default function StudyBoardRoomPage() {
         connectionStatus={connectionStatus}
         connectedUsers={peerUsers}
         currentUser={currentUser}
+        isCreator={isCreator}
+        allowParticipantEditing={allowParticipantEditing}
+        onToggleParticipantEditing={handleTogglePermissions}
+        isBroadcastingViewport={isBroadcastingViewport}
+        onToggleBroadcastViewport={handleToggleBroadcastViewport}
+        isFollowingTeacher={isFollowingTeacher}
+        onToggleFollowTeacher={handleToggleFollowTeacher}
+        recentActivity={recentActivity}
         onShare={() => setShareModalOpen(true)}
         onExportPng={() => exportBoardAsPng(elements, room?.title || roomCode)}
         onExportSvg={() => exportBoardAsSvg(elements, room?.title || roomCode)}
@@ -430,6 +604,16 @@ export default function StudyBoardRoomPage() {
           onElementsChange={handleElementsChange}
           onCursorMove={handleCursorMove}
           onHistoryPush={handleHistoryPush}
+          canEdit={canEdit}
+          isCreator={isCreator}
+          remoteLiveStrokes={remoteLiveStrokes}
+          onLiveDrawChunk={handleLiveDrawChunk}
+          onViewportChange={handleViewportChange}
+          externalViewport={
+            isFollowingTeacher && remoteViewport
+              ? { pan: { x: remoteViewport.panX, y: remoteViewport.panY }, zoom: remoteViewport.zoom }
+              : null
+          }
         />
       </main>
 
@@ -447,6 +631,7 @@ export default function StudyBoardRoomPage() {
         setZoom={setZoom}
         resetZoom={() => setZoom(1.0)}
         onFitToScreen={() => window.dispatchEvent(new CustomEvent('n1:board-fit-screen'))}
+        canEdit={canEdit}
         canUndo={historyIndex > 0}
         canRedo={historyIndex < history.length - 1}
         onUndo={handleUndo}

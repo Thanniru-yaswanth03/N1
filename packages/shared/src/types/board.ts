@@ -68,6 +68,8 @@ export interface IBoardRoom {
   title: string;
   template: BoardTemplate;
   elements: BoardElement[];
+  creatorToken?: string;
+  allowParticipantEditing?: boolean;
   createdAt: Date;
   expiresAt: Date;
   isExpired: boolean;
@@ -79,6 +81,8 @@ export interface BoardRoomSummary {
   title: string;
   template: BoardTemplate;
   elementCount: number;
+  allowParticipantEditing?: boolean;
+  creatorToken?: string;
   createdAt: string;
   expiresAt: string;
   isExpired: boolean;
@@ -88,15 +92,28 @@ export interface ConnectedBoardUser {
   id: string;
   name: string;
   color: string;
+  role?: 'creator' | 'participant';
   cursor?: { x: number; y: number };
 }
 
 export type BoardSocketClientMessage =
-  | { type: 'JOIN'; roomCode: string; userName?: string; userColor?: string }
+  | { type: 'JOIN'; roomCode: string; userName?: string; userColor?: string; creatorToken?: string }
   | { type: 'CURSOR_MOVE'; x: number; y: number }
   | { type: 'ELEMENTS_UPDATE'; elements: BoardElement[] }
   | { type: 'ELEMENT_CHANGE'; element: BoardElement; action: 'add' | 'update' | 'delete' }
-  | { type: 'CLEAR_BOARD' };
+  | { type: 'CLEAR_BOARD' }
+  | {
+      type: 'LIVE_DRAW';
+      strokeId: string;
+      points: BoardPoint[];
+      color: string;
+      strokeWidth: number;
+      isHighlighter?: boolean;
+      isFinished?: boolean;
+    }
+  | { type: 'VIEWPORT_SYNC'; panX: number; panY: number; zoom: number }
+  | { type: 'ACTIVITY_BROADCAST'; action: string; details?: string }
+  | { type: 'TOGGLE_PERMISSIONS'; allowParticipantEditing: boolean };
 
 export type BoardSocketServerMessage =
   | {
@@ -105,6 +122,8 @@ export type BoardSocketServerMessage =
       elements: BoardElement[];
       users: ConnectedBoardUser[];
       currentUser: ConnectedBoardUser;
+      isCreator: boolean;
+      allowParticipantEditing: boolean;
     }
   | { type: 'USER_JOINED'; user: ConnectedBoardUser }
   | { type: 'USER_LEFT'; userId: string }
@@ -124,4 +143,34 @@ export type BoardSocketServerMessage =
     }
   | { type: 'BOARD_CLEARED' }
   | { type: 'ROOM_EXPIRED' }
-  | { type: 'ERROR'; message: string };
+  | { type: 'ERROR'; message: string }
+  | {
+      type: 'LIVE_DRAW_CHUNK';
+      userId: string;
+      userName: string;
+      strokeId: string;
+      points: BoardPoint[];
+      color: string;
+      strokeWidth: number;
+      isHighlighter?: boolean;
+      isFinished?: boolean;
+    }
+  | {
+      type: 'VIEWPORT_UPDATE';
+      userId: string;
+      panX: number;
+      panY: number;
+      zoom: number;
+    }
+  | {
+      type: 'ACTIVITY_INDICATOR';
+      userId: string;
+      userName: string;
+      action: string;
+      details?: string;
+      timestamp: number;
+    }
+  | {
+      type: 'PERMISSIONS_UPDATED';
+      allowParticipantEditing: boolean;
+    };
