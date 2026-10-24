@@ -43,6 +43,10 @@ export interface BoardCanvasProps {
   ) => void;
   onViewportChange?: (pan: { x: number; y: number }, zoom: number) => void;
   externalViewport?: { pan: { x: number; y: number }; zoom: number } | null;
+  adminFocusTarget?: { x: number; y: number; timestamp: number } | null;
+  autoFocusEnabled?: boolean;
+  isUserExploring?: boolean;
+  onUserManualPan?: () => void;
 }
 
 export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -109,6 +113,10 @@ export function BoardCanvas({
   onLiveDrawChunk,
   onViewportChange,
   externalViewport,
+  adminFocusTarget,
+  autoFocusEnabled = true,
+  isUserExploring = false,
+  onUserManualPan,
 }: BoardCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -129,13 +137,74 @@ export function BoardCanvas({
     isCreatorRef.current = isCreator;
   }, [isCreator]);
 
-  // External viewport sync (e.g. participant following teacher)
+  // External viewport sync (e.g. participant following teacher, only if not manually exploring)
   useEffect(() => {
-    if (externalViewport) {
+    if (externalViewport && autoFocusEnabled && !isUserExploring) {
       setPan(externalViewport.pan);
       setZoom(() => externalViewport.zoom);
     }
-  }, [externalViewport, setZoom]);
+  }, [externalViewport, setZoom, autoFocusEnabled, isUserExploring]);
+
+  // Smooth auto-focus on Admin activity (drawings, new notes, shapes, text updates)
+  const animFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!autoFocusEnabled || isUserExploring || !adminFocusTarget) return;
+
+    const canvas = canvasRef.current;
+    const rect = canvas?.getBoundingClientRect();
+    const width = rect?.width || (typeof window !== 'undefined' ? window.innerWidth : 1200);
+    const height = rect?.height || (typeof window !== 'undefined' ? window.innerHeight : 800);
+
+    const curScreenX = adminFocusTarget.x * zoom + pan.x;
+    const curScreenY = adminFocusTarget.y * zoom + pan.y;
+
+    // Safety margin to prevent jumpy panning when the admin continues drawing within the current view
+    const marginX = Math.min(180, width * 0.18);
+    const marginY = Math.min(150, height * 0.18);
+
+    if (
+      curScreenX >= marginX &&
+      curScreenX <= width - marginX &&
+      curScreenY >= marginY &&
+      curScreenY <= height - marginY
+    ) {
+      return;
+    }
+
+    const targetPanX = width / 2 - adminFocusTarget.x * zoom;
+    const targetPanY = height / 2 - adminFocusTarget.y * zoom;
+
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+    const startX = pan.x;
+    const startY = pan.y;
+    const startTime = performance.now();
+    const duration = 320; // 320ms smooth ease-out
+
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const step = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const ease = easeOutCubic(progress);
+
+      const nextX = startX + (targetPanX - startX) * ease;
+      const nextY = startY + (targetPanY - startY) * ease;
+
+      setPan({ x: nextX, y: nextY });
+
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(step);
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [adminFocusTarget, autoFocusEnabled, isUserExploring, zoom]);
 
   // Multi-touch & pointer tracking
   const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -1198,6 +1267,7 @@ export function BoardCanvas({
   // Mouse wheel zoom & pan
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
+    onUserManualPan?.();
     if (e.ctrlKey || e.metaKey) {
       const zoomFactor = e.deltaY < 0 ? 1.05 : 0.95;
       setZoom(prev => {
@@ -1228,6 +1298,7 @@ export function BoardCanvas({
 
     // Multi-touch pinch-to-zoom & two-finger pan
     if (activePointersRef.current.size === 2) {
+      onUserManualPan?.();
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
       const p1 = pts[1];
@@ -1259,6 +1330,7 @@ export function BoardCanvas({
     if (!canEdit) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      onUserManualPan?.();
       return;
     }
 
@@ -1276,6 +1348,7 @@ export function BoardCanvas({
     if (activeTool === 'hand' || isSpacePressed || e.button === 1) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      onUserManualPan?.();
       return;
     }
 
@@ -1474,6 +1547,7 @@ export function BoardCanvas({
 
     // Pinch-to-zoom & two-finger panning calculation
     if (activePointersRef.current.size === 2 && initialPinchDistRef.current && initialMidpointRef.current) {
+      onUserManualPan?.();
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
       const p1 = pts[1];
@@ -1503,6 +1577,7 @@ export function BoardCanvas({
     onCursorMove?.(world.x, world.y);
 
     if (isPanning) {
+      onUserManualPan?.();
       const nextPan = {
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y,

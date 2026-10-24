@@ -83,6 +83,21 @@ export default function StudyBoardRoomPage() {
   // Modals
   const [shareModalOpen, setShareModalOpen] = useState(false);
 
+  // Auto-focus on Admin activity (drawings, notes, edits)
+  const [autoFocusEnabled, setAutoFocusEnabled] = useState<boolean>(true);
+  const [isUserExploring, setIsUserExploring] = useState<boolean>(false);
+  const [adminFocusTarget, setAdminFocusTarget] = useState<{ x: number; y: number; timestamp: number } | null>(null);
+  const userExploringTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Effective permission: Room Admins (and creator) can always edit. Participants edit when allowed.
+  const isAdmin = userRole === 'admin' || isCreator;
+  const canEdit = isAdmin || allowParticipantEditing;
+
+  const isAdminRef = useRef(isAdmin);
+  useEffect(() => {
+    isAdminRef.current = isAdmin;
+  }, [isAdmin]);
+
   // Stable refs to prevent tearing down WebSocket connections when UI state changes
   const isFollowingPresenterRef = useRef(isFollowingPresenter);
   useEffect(() => {
@@ -100,10 +115,6 @@ export default function StudyBoardRoomPage() {
   }, [presenterUserId]);
 
   const dbSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Effective permission: Room Admins (and creator) can always edit. Participants edit when allowed.
-  const isAdmin = userRole === 'admin' || isCreator;
-  const canEdit = isAdmin || allowParticipantEditing;
 
   // 1. Initial Room Load via REST
   useEffect(() => {
@@ -241,6 +252,19 @@ export default function StudyBoardRoomPage() {
       },
       onElementsSync: nextElements => {
         setElements(nextElements);
+        if (!isAdminRef.current && nextElements.length > 0) {
+          let latestEl = nextElements[0];
+          for (const el of nextElements) {
+            if ((el.updatedAt || 0) > (latestEl?.updatedAt || 0)) {
+              latestEl = el;
+            }
+          }
+          if (latestEl) {
+            const centerX = latestEl.x + (latestEl.width || 120) / 2;
+            const centerY = latestEl.y + (latestEl.height || 60) / 2;
+            setAdminFocusTarget({ x: centerX, y: centerY, timestamp: Date.now() });
+          }
+        }
       },
       onElementSync: (element, action) => {
         setElements(prev => {
@@ -252,6 +276,11 @@ export default function StudyBoardRoomPage() {
             return [...prev, element];
           }
         });
+        if (!isAdminRef.current && action !== 'delete' && element) {
+          const centerX = element.x + (element.width || 120) / 2;
+          const centerY = element.y + (element.height || 60) / 2;
+          setAdminFocusTarget({ x: centerX, y: centerY, timestamp: Date.now() });
+        }
       },
       onLiveDrawChunk: chunk => {
         setRemoteLiveStrokes(prev => {
@@ -272,9 +301,17 @@ export default function StudyBoardRoomPage() {
           }
           return next;
         });
+
+        // Real-time auto-focus on Admin live drawing
+        if (!isAdminRef.current && chunk.points && chunk.points.length > 0) {
+          const pt = chunk.points[chunk.points.length - 1] || chunk.points[0];
+          if (pt) {
+            setAdminFocusTarget({ x: pt.x, y: pt.y, timestamp: Date.now() });
+          }
+        }
       },
       onViewportUpdate: vp => {
-        if (isFollowingPresenterRef.current) {
+        if (!isAdminRef.current) {
           setRemoteViewport({ panX: vp.panX, panY: vp.panY, zoom: vp.zoom });
         }
       },
@@ -342,6 +379,7 @@ export default function StudyBoardRoomPage() {
     return () => {
       socket.disconnect();
       if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+      if (userExploringTimerRef.current) clearTimeout(userExploringTimerRef.current);
     };
   }, [roomCode, isExpired, loading]);
 
@@ -482,15 +520,38 @@ export default function StudyBoardRoomPage() {
     [canEdit]
   );
 
-  // Viewport change streaming (broadcasts if current user is active presenter)
+  // Viewport change streaming (broadcasts whenever admin or presenter pans or zooms)
   const handleViewportChange = useCallback(
     (pan: { x: number; y: number }, z: number) => {
-      if (presenterUserId === currentUser?.id) {
+      if (isAdmin || presenterUserId === currentUser?.id) {
         socketRef.current?.sendViewportSync(pan.x, pan.y, z);
       }
     },
-    [presenterUserId, currentUser?.id]
+    [isAdmin, presenterUserId, currentUser?.id]
   );
+
+  // User manual exploration / scroll tracking
+  const handleUserManualPan = useCallback(() => {
+    if (isAdmin) return; // Room admins lead and don't get auto-focused
+    setIsUserExploring(true);
+
+    if (userExploringTimerRef.current) {
+      clearTimeout(userExploringTimerRef.current);
+    }
+
+    // After 7 seconds of inactivity (no scrolling/panning), auto-focus gently re-engages
+    userExploringTimerRef.current = setTimeout(() => {
+      setIsUserExploring(false);
+    }, 7000);
+  }, [isAdmin]);
+
+  const handleSnapToAdmin = useCallback(() => {
+    if (userExploringTimerRef.current) {
+      clearTimeout(userExploringTimerRef.current);
+    }
+    setIsUserExploring(false);
+    setAutoFocusEnabled(true);
+  }, []);
 
   // Cursor broadcast
   const handleCursorMove = useCallback((x: number, y: number) => {
@@ -697,12 +758,63 @@ export default function StudyBoardRoomPage() {
           onLiveDrawChunk={handleLiveDrawChunk}
           onViewportChange={handleViewportChange}
           externalViewport={
-            isFollowingPresenter && remoteViewport && presenterUserId !== currentUser?.id
+            !isAdmin && autoFocusEnabled && !isUserExploring && remoteViewport
               ? { pan: { x: remoteViewport.panX, y: remoteViewport.panY }, zoom: remoteViewport.zoom }
               : null
           }
+          adminFocusTarget={adminFocusTarget}
+          autoFocusEnabled={autoFocusEnabled}
+          isUserExploring={isUserExploring}
+          onUserManualPan={handleUserManualPan}
         />
       </main>
+
+      {/* ── Participant Auto-Focus & Free Scroll Status Pill ── */}
+      {!isAdmin && (
+        <div className="fixed bottom-20 sm:bottom-24 left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in slide-in-from-bottom-2 duration-200">
+          {isUserExploring ? (
+            <div className="px-3.5 py-1.5 rounded-full bg-[#10101c]/95 border border-purple-500/40 text-purple-200 text-xs font-medium backdrop-blur-xl flex items-center gap-2.5 shadow-2xl">
+              <span className="flex items-center gap-1.5 text-zinc-300">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <span>Free Scroll Active</span>
+              </span>
+              <span className="text-zinc-600">|</span>
+              <button
+                type="button"
+                onClick={handleSnapToAdmin}
+                className="px-2.5 py-1 rounded-full bg-purple-500/25 hover:bg-purple-500/40 text-purple-200 hover:text-white text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                title="Snap back to Admin's active changes"
+              >
+                <span>🎯 Snap to Admin</span>
+              </button>
+            </div>
+          ) : autoFocusEnabled ? (
+            <div className="px-3.5 py-1 rounded-full bg-[#10101c]/85 border border-emerald-500/30 text-emerald-300 text-xs font-medium backdrop-blur-md flex items-center gap-2 shadow-lg">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>🎯 Focusing on Admin</span>
+              <button
+                type="button"
+                onClick={() => setIsUserExploring(true)}
+                className="text-zinc-400 hover:text-zinc-200 text-[11px] underline ml-1 cursor-pointer"
+                title="Explore anywhere on canvas without auto-repositioning"
+              >
+                Free scroll
+              </button>
+            </div>
+          ) : (
+            <div className="px-3 py-1 rounded-full bg-[#10101c]/85 border border-zinc-700 text-zinc-400 text-xs font-medium backdrop-blur-md flex items-center gap-2 shadow-lg">
+              <span>👁️ Free View</span>
+              <button
+                type="button"
+                onClick={handleSnapToAdmin}
+                className="text-cyan-400 hover:text-cyan-300 text-xs font-semibold ml-1 cursor-pointer"
+              >
+                Follow Admin
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Bottom Floating Toolbar ── */}
       <BoardToolbar
