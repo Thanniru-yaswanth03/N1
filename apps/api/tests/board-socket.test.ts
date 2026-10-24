@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import { WebSocket } from 'ws';
+import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { connectDatabase, disconnectDatabase } from '../src/database/connection.js';
 import { BoardRoomModel } from '../src/models/board-room.model.js';
@@ -11,13 +12,14 @@ import { BoardElement } from '@n1/shared';
 describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
   let server: http.Server;
   let port: number;
+  let app: any;
   const activeSockets: WebSocket[] = [];
 
   beforeAll(async () => {
     await connectDatabase();
     await BoardRoomModel.deleteMany({ title: /SocketTest/i });
 
-    const app = createApp();
+    app = createApp();
     server = http.createServer(app);
     boardWebSocketManager.init(server);
 
@@ -836,7 +838,7 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
     expect(reaction.userName).toBe('Student_Maya');
   });
 
-  it('allows room admin to kick a disruptive participant and protects creator from being kicked', async () => {
+  it('allows room admin to kick a disruptive participant, blocks re-entry via WebSocket and REST, and protects creator', async () => {
     const room = await boardRoomService.createRoom({ title: 'KickTest Room', template: 'blank' });
 
     // Admin (Creator)
@@ -852,13 +854,14 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
       });
     });
 
-    // Disruptive participant
+    // Disruptive participant with persistent clientId
+    const trollClientId = 'client_troll_dev_99';
     const wsTroll = new WebSocket(`ws://localhost:${port}/ws/board`);
     activeSockets.push(wsTroll);
     await new Promise<void>(resolve => wsTroll.on('open', resolve));
     let trollId = '';
     await new Promise<void>(resolve => {
-      wsTroll.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Troll_User' }));
+      wsTroll.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Troll_User', clientId: trollClientId }));
       wsTroll.once('message', data => {
         trollId = JSON.parse(data.toString()).currentUser.id;
         resolve();
@@ -869,9 +872,13 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
     const wsStudent = new WebSocket(`ws://localhost:${port}/ws/board`);
     activeSockets.push(wsStudent);
     await new Promise<void>(resolve => wsStudent.on('open', resolve));
+    let studentId = '';
     await new Promise<void>(resolve => {
       wsStudent.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Observer_Student' }));
-      wsStudent.once('message', () => resolve());
+      wsStudent.once('message', data => {
+        studentId = JSON.parse(data.toString()).currentUser.id;
+        resolve();
+      });
     });
 
     // Attempt 1: Participant tries to kick admin (should fail with ERROR)
@@ -880,17 +887,150 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
     const err = await trollKickErrPromise;
     expect(err.message).toContain('Only a Room Admin');
 
-    // Attempt 2: Admin kicks disruptive participant
+    // Attempt 2: Admin tries to kick themselves (should fail)
+    const selfKickErrPromise = waitForMessage(wsAdmin, 'ERROR');
+    wsAdmin.send(JSON.stringify({ type: 'KICK_USER', targetUserId: adminId }));
+    const selfErr = await selfKickErrPromise;
+    expect(selfErr.message.toLowerCase()).toContain('cannot kick yourself');
+
+    // Attempt 3: Admin kicks disruptive participant
     const kickedPromise = waitForMessage(wsTroll, 'KICKED');
     const userKickedPromise = waitForMessage(wsStudent, 'USER_KICKED');
+
+    const trollClosePromise = new Promise<{ code: number; reason: string }>(resolve => {
+      wsTroll.on('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+    });
 
     wsAdmin.send(JSON.stringify({ type: 'KICK_USER', targetUserId: trollId, reason: 'Spamming board' }));
 
     const kickedEvent = await kickedPromise;
     expect(kickedEvent.reason).toBe('Spamming board');
 
+    const trollClose = await trollClosePromise;
+    expect(trollClose.code).toBe(4003);
+
     const roomKickedEvent = await userKickedPromise;
     expect(roomKickedEvent.userId).toBe(trollId);
     expect(roomKickedEvent.userName).toBe('Troll_User');
+
+    // Attempt 4: Troll attempts to reconnect via WebSocket and join with the same clientId
+    const wsTrollRejoin = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsTrollRejoin);
+    await new Promise<void>(resolve => wsTrollRejoin.on('open', resolve));
+
+    const trollRejoinKickedPromise = waitForMessage(wsTrollRejoin, 'KICKED');
+    const trollRejoinClosePromise = new Promise<{ code: number }>(resolve => {
+      wsTrollRejoin.on('close', code => resolve({ code }));
+    });
+
+    wsTrollRejoin.send(
+      JSON.stringify({
+        type: 'JOIN',
+        roomCode: room.code,
+        userName: 'Troll_User',
+        clientId: trollClientId,
+      })
+    );
+
+    const rejoinKicked = await trollRejoinKickedPromise;
+    expect(rejoinKicked.type).toBe('KICKED');
+
+    const trollRejoinClose = await trollRejoinClosePromise;
+    expect(trollRejoinClose.code).toBe(4003);
+
+    // Attempt 5: Troll attempts to access room via REST GET
+    const restGet = await request(app)
+      .get(`/api/board/rooms/${room.code}?clientId=${trollClientId}`);
+    expect(restGet.status).toBe(403);
+    expect(restGet.body.error?.code).toBe('USER_KICKED');
+
+    // Attempt 6: Troll attempts to update board elements via REST PUT
+    const restPut = await request(app)
+      .put(`/api/board/rooms/${room.code}/elements`)
+      .set('x-client-id', trollClientId)
+      .send({ elements: [] });
+    expect(restPut.status).toBe(403);
+    expect(restPut.body.error?.code).toBe('USER_KICKED');
+
+    // Attempt 7: Promote Student to Admin, then promoted Admin tries to kick the Creator (should be protected)
+    wsAdmin.send(JSON.stringify({ type: 'PROMOTE_USER', targetUserId: studentId }));
+    await waitForMessage(wsStudent, 'ROLE_UPDATED');
+
+    const kickCreatorErrPromise = waitForMessage(wsStudent, 'ERROR');
+    wsStudent.send(JSON.stringify({ type: 'KICK_USER', targetUserId: adminId }));
+    const creatorKickErr = await kickCreatorErrPromise;
+    expect(creatorKickErr.message).toContain('room creator cannot be kicked');
+  });
+
+  it('persists chat messages to MongoDB and delivers history to newly joined participants', async () => {
+    const room = await boardRoomService.createRoom({
+      title: 'ChatPersistence Room',
+      template: 'blank',
+      expiresInHours: 2,
+    });
+
+    // Client A connects and joins
+    const wsA = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsA);
+    await new Promise<void>(resolve => wsA.on('open', resolve));
+
+    await new Promise<void>(resolve => {
+      wsA.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Alice', clientId: 'client_alice' }));
+      wsA.once('message', () => resolve());
+    });
+
+    // Client B connects and joins
+    const wsB = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsB);
+    await new Promise<void>(resolve => wsB.on('open', resolve));
+
+    await new Promise<void>(resolve => {
+      wsB.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Bob', clientId: 'client_bob' }));
+      wsB.once('message', () => resolve());
+    });
+
+    // Alice sends a chat message with a client messageId
+    const testMessageId = `msg_persist_${Date.now()}`;
+    const bobChatPromise = waitForMessage(wsB, 'CHAT_BROADCAST');
+
+    wsA.send(
+      JSON.stringify({
+        type: 'CHAT_MESSAGE',
+        text: 'Hello, this is a persisted classroom message!',
+        messageId: testMessageId,
+      })
+    );
+
+    const receivedByBob = await bobChatPromise;
+    expect(receivedByBob.message.id).toBe(testMessageId);
+    expect(receivedByBob.message.userName).toBe('Alice');
+    expect(receivedByBob.message.text).toBe('Hello, this is a persisted classroom message!');
+
+    // Allow async database write to complete
+    await new Promise(r => setTimeout(r, 200));
+
+    // Client C connects later (reloading or joining after messages were sent)
+    const wsC = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsC);
+    await new Promise<void>(resolve => wsC.on('open', resolve));
+
+    const statePromiseC = waitForMessage(wsC, 'ROOM_STATE');
+    wsC.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Charlie', clientId: 'client_charlie' }));
+
+    const stateC = await statePromiseC;
+    expect(stateC.messages).toBeDefined();
+    expect(stateC.messages.length).toBeGreaterThanOrEqual(1);
+    const persistedMsg = stateC.messages.find((m: any) => m.id === testMessageId);
+    expect(persistedMsg).toBeDefined();
+    expect(persistedMsg.text).toBe('Hello, this is a persisted classroom message!');
+    expect(persistedMsg.userName).toBe('Alice');
+
+    // Also verify REST API room retrieval includes persisted messages
+    const restRoom = await request(app).get(`/api/board/rooms/${room.code}`);
+    expect(restRoom.status).toBe(200);
+    expect(restRoom.body.data.messages).toBeDefined();
+    const restMsg = restRoom.body.data.messages.find((m: any) => m.id === testMessageId);
+    expect(restMsg).toBeDefined();
+    expect(restMsg.text).toBe('Hello, this is a persisted classroom message!');
   });
 });

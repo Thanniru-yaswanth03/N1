@@ -50,7 +50,7 @@ export function ParticipantsModal({
   allowParticipantEditing,
   onToggleParticipantEditing,
 }: ParticipantsModalProps) {
-  const [confirmKickId, setConfirmKickId] = React.useState<string | null>(null);
+  const [targetToKick, setTargetToKick] = React.useState<ConnectedBoardUser | null>(null);
 
   if (!isOpen) return null;
 
@@ -288,40 +288,16 @@ export function ParticipantsModal({
                       </>
                     )}
 
-                    {/* Kick User Button with 2-step confirmation */}
+                    {/* Kick User Button */}
                     {isAdmin && !isUserSelf && !isUserOwner && (!isUserAdmin || isCreator) && (
-                      confirmKickId === user.id ? (
-                        <div className="flex items-center gap-1 animate-in fade-in duration-100">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onKickUser(user.id);
-                              setConfirmKickId(null);
-                            }}
-                            title={`Confirm removing ${user.name}`}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-sm transition-all"
-                          >
-                            Confirm Kick
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmKickId(null)}
-                            title="Cancel kick"
-                            className="px-2 py-1 rounded-lg text-xs text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmKickId(user.id)}
-                          title={`Remove ${user.name} from room`}
-                          className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all flex items-center gap-1"
-                        >
-                          <span>🚫 Kick</span>
-                        </button>
-                      )
+                      <button
+                        type="button"
+                        onClick={() => setTargetToKick(user)}
+                        title={`Remove ${user.name} from room`}
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all flex items-center gap-1"
+                      >
+                        <span>🚫 Kick</span>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -329,6 +305,74 @@ export function ParticipantsModal({
             })}
           </div>
         </div>
+
+        {/* Kick Confirmation Dialog identifying target participant */}
+        {targetToKick && (
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="kick-dialog-title"
+            className="absolute inset-0 z-20 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
+            onClick={e => {
+              if (e.target === e.currentTarget) setTargetToKick(null);
+            }}
+          >
+            <div className="w-full max-w-sm p-5 rounded-2xl border border-rose-500/40 bg-[#161626] shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 text-left">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 text-lg shrink-0">
+                  🚫
+                </div>
+                <div>
+                  <h3 id="kick-dialog-title" className="text-sm font-bold text-white">
+                    Remove Participant?
+                  </h3>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    This action will immediately revoke access
+                  </p>
+                </div>
+              </div>
+
+              {/* Target Participant Identity */}
+              <div className="p-3 rounded-xl border border-white/10 bg-white/[0.03] flex items-center gap-2.5">
+                <div
+                  style={{ backgroundColor: targetToKick.color || '#00f0ff' }}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-black uppercase shrink-0 ring-1 ring-white/20"
+                >
+                  {targetToKick.name.charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-white truncate">{targetToKick.name}</div>
+                  <div className="text-[10px] text-zinc-400 capitalize">Role: {targetToKick.role}</div>
+                </div>
+              </div>
+
+              <p className="text-xs text-rose-200/90 leading-relaxed">
+                Are you sure you want to kick <strong>{targetToKick.name}</strong> from this study room?
+                They will be disconnected immediately and barred from re-entering.
+              </p>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setTargetToKick(null)}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-medium text-zinc-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onKickUser(targetToKick.id);
+                    setTargetToKick(null);
+                  }}
+                  className="px-4 py-1.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 shadow-md shadow-rose-900/30 transition-all active:scale-95 flex items-center gap-1.5"
+                >
+                  <span>Confirm Kick</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer info */}
         <div className="px-4 py-3 border-t border-white/10 bg-white/[0.02] flex items-center justify-between text-xs text-[var(--color-text-muted)]">

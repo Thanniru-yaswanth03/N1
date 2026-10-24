@@ -15,6 +15,8 @@ export interface BoardRoomDetail {
   title: string;
   template: BoardTemplate;
   elements: BoardElement[];
+  messages?: BoardChatMessage[];
+  kickedUserIds?: string[];
   createdAt: string;
   expiresAt: string;
   isExpired: boolean;
@@ -44,6 +46,47 @@ export function getStoredCreatorToken(code: string): string | null {
     return localStorage.getItem(`n1_board_creator_${code.toUpperCase().trim()}`);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Returns a stable client identifier for anonymous room participation and kick enforcement.
+ */
+export function getBoardClientId(): string {
+  if (typeof window === 'undefined') return 'cl_ssr';
+  try {
+    let id = localStorage.getItem('n1_board_client_id');
+    if (!id) {
+      id = `cl_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+      localStorage.setItem('n1_board_client_id', id);
+    }
+    return id;
+  } catch {
+    return `cl_${Math.random().toString(36).substring(2, 9)}`;
+  }
+}
+
+/**
+ * Stores local kick marker so browser navigation immediately bounces kicked user.
+ */
+export function markUserKicked(code: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`n1_kicked_${code.toUpperCase().trim()}`, 'true');
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Checks if user is marked as kicked locally.
+ */
+export function isUserKickedLocally(code: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(`n1_kicked_${code.toUpperCase().trim()}`) === 'true';
+  } catch {
+    return false;
   }
 }
 
@@ -84,15 +127,30 @@ export async function createBoardRoom(
  * Fetches an active room by code.
  */
 export async function fetchBoardRoom(code: string): Promise<BoardRoomDetail> {
-  const res = await fetch(`${API_BASE}/api/board/rooms/${code.toUpperCase().trim()}`);
+  const cleanCode = code.toUpperCase().trim();
+  const clientId = getBoardClientId();
+
+  const res = await fetch(`${API_BASE}/api/board/rooms/${cleanCode}?clientId=${encodeURIComponent(clientId)}`, {
+    headers: {
+      'x-client-id': clientId,
+    },
+  });
   const json = await res.json();
+
+  if (res.status === 403 && json.error?.code === 'USER_KICKED') {
+    markUserKicked(cleanCode);
+    const err = new Error(json.error.message || 'You have been removed from this room by an admin.');
+    (err as any).code = 'USER_KICKED';
+    throw err;
+  }
 
   if (res.status === 410) {
     return {
-      code: code.toUpperCase().trim(),
+      code: cleanCode,
       title: 'Expired Room',
       template: 'blank',
       elements: [],
+      messages: [],
       createdAt: '',
       expiresAt: '',
       isExpired: true,
@@ -119,9 +177,14 @@ export async function fetchBoardRoom(code: string): Promise<BoardRoomDetail> {
  */
 export async function syncBoardElements(code: string, elements: BoardElement[]): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/api/board/rooms/${code.toUpperCase().trim()}/elements`, {
+    const cleanCode = code.toUpperCase().trim();
+    const clientId = getBoardClientId();
+    const res = await fetch(`${API_BASE}/api/board/rooms/${cleanCode}/elements?clientId=${encodeURIComponent(clientId)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-client-id': clientId,
+      },
       body: JSON.stringify({ elements }),
     });
     return res.ok;
@@ -135,8 +198,13 @@ export async function syncBoardElements(code: string, elements: BoardElement[]):
  */
 export async function clearBoardElements(code: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/api/board/rooms/${code.toUpperCase().trim()}/clear`, {
+    const cleanCode = code.toUpperCase().trim();
+    const clientId = getBoardClientId();
+    const res = await fetch(`${API_BASE}/api/board/rooms/${cleanCode}/clear?clientId=${encodeURIComponent(clientId)}`, {
       method: 'POST',
+      headers: {
+        'x-client-id': clientId,
+      },
     });
     return res.ok;
   } catch {
@@ -261,7 +329,7 @@ export function connectBoardSocket(
   sendPromoteUser: (targetUserId: string) => void;
   sendRevokeAdmin: (targetUserId: string) => void;
   sendKickUser: (targetUserId: string, reason?: string) => void;
-  sendChatMessage: (text: string) => void;
+  sendChatMessage: (text: string, messageId?: string) => void;
   sendRaiseHand: (raised: boolean) => void;
   sendLowerHand: (targetUserId?: string) => void;
   sendReaction: (emoji: string) => void;
@@ -275,6 +343,7 @@ export function connectBoardSocket(
   let reconnectTimeout: NodeJS.Timeout | null = null;
   let pingInterval: NodeJS.Timeout | null = null;
 
+  const clientId = getBoardClientId();
   const resolvedToken = creatorToken || getStoredCreatorToken(roomCode);
 
   const wsUrl = (() => {
@@ -284,13 +353,15 @@ export function connectBoardSocket(
       const protocol = isSecure ? 'wss:' : 'ws:';
       const nameParam = userName ? `&name=${encodeURIComponent(userName)}` : '';
       const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-      return `${protocol}//${parsed.host}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}${tokenParam}`;
+      const clientParam = `&clientId=${encodeURIComponent(clientId)}`;
+      return `${protocol}//${parsed.host}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}${tokenParam}${clientParam}`;
     } catch {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const cleanHost = API_BASE.replace(/^https?:\/\//, '').replace(/\/+$/, '');
       const nameParam = userName ? `&name=${encodeURIComponent(userName)}` : '';
       const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-      return `${protocol}//${cleanHost}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}${tokenParam}`;
+      const clientParam = `&clientId=${encodeURIComponent(clientId)}`;
+      return `${protocol}//${cleanHost}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}${tokenParam}${clientParam}`;
     }
   })();
 
@@ -343,6 +414,7 @@ export function connectBoardSocket(
               callbacks.onUserKicked?.(msg);
               break;
             case 'KICKED':
+              markUserKicked(roomCode);
               callbacks.onKicked?.(msg.reason);
               break;
             case 'CHAT_BROADCAST':
@@ -413,6 +485,13 @@ export function connectBoardSocket(
         if (event.code === 4010) {
           callbacks.onConnectionStatusChange?.('DISCONNECTED');
           callbacks.onRoomExpired();
+          return;
+        }
+
+        if (event.code === 4003) {
+          markUserKicked(roomCode);
+          callbacks.onConnectionStatusChange?.('DISCONNECTED');
+          callbacks.onKicked?.('You have been removed from this study room by an admin.');
           return;
         }
 
@@ -491,8 +570,8 @@ export function connectBoardSocket(
     sendKickUser: (targetUserId: string, reason?: string) => {
       send({ type: 'KICK_USER', targetUserId, reason });
     },
-    sendChatMessage: (text: string) => {
-      send({ type: 'CHAT_MESSAGE', text });
+    sendChatMessage: (text: string, messageId?: string) => {
+      send({ type: 'CHAT_MESSAGE', text, messageId });
     },
     sendRaiseHand: (raised: boolean) => {
       send({ type: 'RAISE_HAND', raised });

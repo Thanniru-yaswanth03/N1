@@ -1,11 +1,13 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
-import { BoardTemplate, BoardElement } from '@n1/shared';
+import { BoardTemplate, BoardElement, BoardChatMessage } from '@n1/shared';
 
 export interface IBoardRoomDocument extends Document {
   code: string;
   title: string;
   template: BoardTemplate;
   elements: BoardElement[];
+  messages: BoardChatMessage[];
+  kickedUserIds: string[];
   creatorToken?: string;
   allowParticipantEditing: boolean;
   createdAt: Date;
@@ -50,6 +52,25 @@ const BoardRoomSchema = new Schema<IBoardRoomDocument>(
     },
     elements: {
       type: Schema.Types.Mixed,
+      default: [],
+    },
+    messages: {
+      type: [
+        {
+          id: { type: String, required: true },
+          userId: { type: String, required: true },
+          userName: { type: String, required: true },
+          userColor: { type: String, default: '#00f0ff' },
+          role: { type: String, enum: ['admin', 'participant'], default: 'participant' },
+          isOwner: { type: Boolean, default: false },
+          text: { type: String, required: true, maxlength: 1000 },
+          timestamp: { type: Number, required: true },
+        },
+      ],
+      default: [],
+    },
+    kickedUserIds: {
+      type: [String],
       default: [],
     },
     creatorToken: {

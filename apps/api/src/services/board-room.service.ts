@@ -3,7 +3,7 @@ import { boardRoomRepository, IBoardRoomRepository } from '../repositories/board
 import { generateDropCode } from '../security/tokens.js';
 import { getTemplateElements } from '@n1/shared';
 import { CreateBoardRoomInput } from '@n1/validation';
-import { BoardElement, BoardRoomSummary } from '@n1/shared';
+import { BoardElement, BoardRoomSummary, BoardChatMessage } from '@n1/shared';
 import { IBoardRoomDocument } from '../models/board-room.model.js';
 
 export interface BoardRoomDetailResult {
@@ -11,6 +11,8 @@ export interface BoardRoomDetailResult {
   title: string;
   template: string;
   elements: BoardElement[];
+  messages: BoardChatMessage[];
+  kickedUserIds: string[];
   createdAt: string;
   expiresAt: string;
   isExpired: boolean;
@@ -84,6 +86,8 @@ export class BoardRoomService {
         title: room.title,
         template: room.template,
         elements: [],
+        messages: [],
+        kickedUserIds: [],
         createdAt: room.createdAt.toISOString(),
         expiresAt: room.expiresAt.toISOString(),
         isExpired: true,
@@ -102,6 +106,8 @@ export class BoardRoomService {
       title: room.title,
       template: room.template,
       elements: room.elements || [],
+      messages: room.messages || [],
+      kickedUserIds: room.kickedUserIds || [],
       createdAt: room.createdAt.toISOString(),
       expiresAt: room.expiresAt.toISOString(),
       isExpired: false,
@@ -159,6 +165,29 @@ export class BoardRoomService {
   }
 
   /**
+   * Persists a chat message to the room's message stream.
+   */
+  async addChatMessage(code: string, message: BoardChatMessage): Promise<boolean> {
+    const updated = await this.repo.addMessage(code, message);
+    return !!updated;
+  }
+
+  /**
+   * Records kicked user identifiers in database.
+   */
+  async kickUser(code: string, identifiers: string[]): Promise<boolean> {
+    const updated = await this.repo.addKickedUsers(code, identifiers);
+    return !!updated;
+  }
+
+  /**
+   * Checks if user identifiers are in the kicked list.
+   */
+  async isUserKicked(code: string, identifiers: string[]): Promise<boolean> {
+    return this.repo.isUserKicked(code, identifiers);
+  }
+
+  /**
    * Converts a document to public summary.
    */
   toSummary(room: IBoardRoomDocument): BoardRoomSummary {
@@ -172,6 +201,8 @@ export class BoardRoomService {
       createdAt: room.createdAt.toISOString(),
       expiresAt: room.expiresAt.toISOString(),
       isExpired: room.isExpired,
+      messages: room.messages || [],
+      kickedUserIds: room.kickedUserIds || [],
     };
   }
 }

@@ -19,6 +19,8 @@ import {
   BoardRoomDetail,
   BoardConnectionStatus,
   getStoredCreatorToken,
+  isUserKickedLocally,
+  markUserKicked,
 } from '../../../lib/board-client';
 import {
   exportBoardAsPng,
@@ -137,6 +139,12 @@ export default function StudyBoardRoomPage() {
   useEffect(() => {
     if (!roomCode) return;
 
+    if (isUserKickedLocally(roomCode)) {
+      setKickedModalReason('You have been removed from this study room by an admin.');
+      setLoading(false);
+      return;
+    }
+
     let mounted = true;
     setLoading(true);
     setLoadError(null);
@@ -153,6 +161,9 @@ export default function StudyBoardRoomPage() {
         }
 
         setRoom(data);
+        if (data.messages && data.messages.length > 0) {
+          setChatMessages(data.messages);
+        }
         if (data.allowParticipantEditing !== undefined) {
           setAllowParticipantEditing(data.allowParticipantEditing);
         }
@@ -170,6 +181,11 @@ export default function StudyBoardRoomPage() {
       })
       .catch(err => {
         if (!mounted) return;
+        if (err.code === 'USER_KICKED' || isUserKickedLocally(roomCode)) {
+          setKickedModalReason(err.message || 'You have been removed from this study room by an admin.');
+          setLoading(false);
+          return;
+        }
         setLoadError((err as Error).message || 'Failed to load study room');
         setLoading(false);
       });
@@ -181,7 +197,7 @@ export default function StudyBoardRoomPage() {
 
   // 2. Establish Real-Time WebSocket Connection
   useEffect(() => {
-    if (!roomCode || isExpired || loading) return;
+    if (!roomCode || isExpired || loading || kickedModalReason) return;
 
     const socket = connectBoardSocket(roomCode, {
       onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing, role, presenterId, recentMessages) => {
@@ -373,7 +389,23 @@ export default function StudyBoardRoomPage() {
         }
       },
       onChatMessage: msg => {
-        setChatMessages(prev => [...prev, msg]);
+        setChatMessages(prev => {
+          const idIdx = prev.findIndex(m => m.id === msg.id);
+          if (idIdx !== -1) {
+            const next = [...prev];
+            next[idIdx] = { ...msg, status: 'sent' };
+            return next;
+          }
+          const optIdx = prev.findIndex(
+            m => m.status === 'sending' && m.userId === msg.userId && m.text === msg.text
+          );
+          if (optIdx !== -1) {
+            const next = [...prev];
+            next[optIdx] = { ...msg, status: 'sent' };
+            return next;
+          }
+          return [...prev, { ...msg, status: 'sent' }];
+        });
         if (!chatOpenRef.current) {
           setUnreadMessageCount(c => c + 1);
         }
@@ -410,7 +442,9 @@ export default function StudyBoardRoomPage() {
         activityTimerRef.current = setTimeout(() => setRecentActivity(null), 5000);
       },
       onKicked: reason => {
-        setKickedModalReason(reason || 'You have been removed from this study session by an admin.');
+        const kickMsg = reason || 'You have been removed from this study session by an admin.';
+        setKickedModalReason(kickMsg);
+        markUserKicked(roomCode);
         socketRef.current?.disconnect();
       },
       onPresentationState: state => {
@@ -665,6 +699,13 @@ export default function StudyBoardRoomPage() {
 
   const handleKickUser = useCallback((userId: string) => {
     socketRef.current?.sendKickUser(userId);
+    setRecentActivity({
+      userName: 'Admin',
+      action: 'removing participant from room...',
+      timestamp: Date.now(),
+    });
+    if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+    activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
   }, []);
 
   const handleToggleRaiseHand = useCallback(() => {
@@ -683,7 +724,48 @@ export default function StudyBoardRoomPage() {
   }, [currentUser?.id]);
 
   const handleSendMessage = useCallback((text: string) => {
-    socketRef.current?.sendChatMessage(text);
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const messageId = `msg_c_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const optimisticMsg: BoardChatMessage = {
+      id: messageId,
+      userId: currentUserRef.current?.id || 'me',
+      userName: currentUserRef.current?.name || 'You',
+      userColor: currentUserRef.current?.color || '#00f0ff',
+      role: userRole,
+      isOwner: isCreator,
+      text: trimmed,
+      timestamp: Date.now(),
+      status: isConnected ? 'sending' : 'failed',
+    };
+
+    setChatMessages(prev => [...prev, optimisticMsg]);
+
+    if (!isConnected) {
+      return;
+    }
+
+    try {
+      socketRef.current?.sendChatMessage(trimmed, messageId);
+    } catch {
+      setChatMessages(prev =>
+        prev.map(m => (m.id === messageId ? { ...m, status: 'failed' } : m))
+      );
+    }
+  }, [userRole, isCreator, isConnected]);
+
+  const handleRetrySendMessage = useCallback((failedMsg: BoardChatMessage) => {
+    setChatMessages(prev =>
+      prev.map(m => (m.id === failedMsg.id ? { ...m, status: 'sending' } : m))
+    );
+    try {
+      socketRef.current?.sendChatMessage(failedMsg.text, failedMsg.id);
+    } catch {
+      setChatMessages(prev =>
+        prev.map(m => (m.id === failedMsg.id ? { ...m, status: 'failed' } : m))
+      );
+    }
   }, []);
 
   const handleSendReaction = useCallback((emoji: string) => {
@@ -712,12 +794,12 @@ export default function StudyBoardRoomPage() {
           </div>
 
           <div className="space-y-2">
-            <h1 className="text-xl font-bold text-white">Session Terminated</h1>
-            <p className="text-xs text-rose-200/90 leading-relaxed font-medium">
+            <h1 className="text-xl font-bold text-white">Access Denied</h1>
+            <p className="text-xs text-rose-200/90 leading-relaxed font-semibold">
               {kickedModalReason}
             </p>
             <p className="text-xs text-[var(--color-text-muted)]">
-              You were removed from this session by a Room Admin or Creator.
+              You were removed from this room by an admin and cannot re-enter.
             </p>
           </div>
 
@@ -728,10 +810,10 @@ export default function StudyBoardRoomPage() {
           <Button
             variant="primary"
             size="lg"
-            onClick={() => router.push('/board')}
+            onClick={() => router.replace('/board')}
             className="w-full justify-center bg-cyan-500 hover:bg-cyan-400 text-black font-bold"
           >
-            Return to Study Hub →
+            Return to Study Board Hub →
           </Button>
         </div>
       </div>
@@ -992,6 +1074,7 @@ export default function StudyBoardRoomPage() {
         messages={chatMessages}
         currentUser={currentUser}
         onSendMessage={handleSendMessage}
+        onRetrySendMessage={handleRetrySendMessage}
         onSendReaction={handleSendReaction}
         handRaised={handRaised}
         onToggleRaiseHand={handleToggleRaiseHand}

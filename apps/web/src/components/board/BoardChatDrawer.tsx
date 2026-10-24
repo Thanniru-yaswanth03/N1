@@ -9,6 +9,7 @@ export interface BoardChatDrawerProps {
   messages: BoardChatMessage[];
   currentUser: ConnectedBoardUser | null;
   onSendMessage: (text: string) => void;
+  onRetrySendMessage?: (msg: BoardChatMessage) => void;
   onSendReaction: (emoji: string) => void;
   handRaised: boolean;
   onToggleRaiseHand: () => void;
@@ -22,6 +23,7 @@ export function BoardChatDrawer({
   messages,
   currentUser,
   onSendMessage,
+  onRetrySendMessage,
   onSendReaction,
   handRaised,
   onToggleRaiseHand,
@@ -229,6 +231,37 @@ export function BoardChatDrawer({
                     <div className="whitespace-pre-wrap break-words leading-relaxed">
                       {msg.text}
                     </div>
+
+                    {/* Status indicator for sending/sent/failed */}
+                    {isSelf && msg.status && (
+                      <div className="flex items-center justify-end gap-1 text-[9px] pt-0.5">
+                        {msg.status === 'sending' && (
+                          <span className="text-cyan-300/70 flex items-center gap-1 font-mono">
+                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                            sending...
+                          </span>
+                        )}
+                        {msg.status === 'failed' && (
+                          <div className="flex items-center gap-1.5 text-rose-300 font-medium">
+                            <span>⚠️ Failed</span>
+                            {onRetrySendMessage && (
+                              <button
+                                type="button"
+                                onClick={() => onRetrySendMessage(msg)}
+                                className="underline hover:text-white font-bold cursor-pointer"
+                              >
+                                Retry
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {msg.status === 'sent' && (
+                          <span className="text-cyan-400/60 font-mono" title="Sent">
+                            ✓
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

@@ -86,6 +86,8 @@ export interface BoardRoomSummary {
   createdAt: string;
   expiresAt: string;
   isExpired: boolean;
+  messages?: BoardChatMessage[];
+  kickedUserIds?: string[];
 }
 
 export interface BoardChatMessage {
@@ -97,6 +99,7 @@ export interface BoardChatMessage {
   isOwner?: boolean;
   text: string;
   timestamp: number;
+  status?: 'sending' | 'sent' | 'failed';
 }
 
 export interface ConnectedBoardUser {
@@ -111,7 +114,7 @@ export interface ConnectedBoardUser {
 }
 
 export type BoardSocketClientMessage =
-  | { type: 'JOIN'; roomCode: string; userName?: string; userColor?: string; creatorToken?: string }
+  | { type: 'JOIN'; roomCode: string; userName?: string; userColor?: string; creatorToken?: string; clientId?: string }
   | { type: 'CURSOR_MOVE'; x: number; y: number }
   | { type: 'ELEMENTS_UPDATE'; elements: BoardElement[] }
   | { type: 'ELEMENT_CHANGE'; element: BoardElement; action: 'add' | 'update' | 'delete' }
@@ -131,7 +134,7 @@ export type BoardSocketClientMessage =
   | { type: 'PROMOTE_USER'; targetUserId: string }
   | { type: 'REVOKE_ADMIN'; targetUserId: string }
   | { type: 'KICK_USER'; targetUserId: string; reason?: string }
-  | { type: 'CHAT_MESSAGE'; text: string }
+  | { type: 'CHAT_MESSAGE'; text: string; messageId?: string }
   | { type: 'RAISE_HAND'; raised: boolean }
   | { type: 'LOWER_HAND'; targetUserId?: string }
   | { type: 'SEND_REACTION'; emoji: string }
@@ -151,6 +154,7 @@ export type BoardSocketServerMessage =
       allowParticipantEditing: boolean;
       presenterUserId?: string | null;
       recentMessages?: BoardChatMessage[];
+      messages?: BoardChatMessage[];
     }
   | { type: 'USER_JOINED'; user: ConnectedBoardUser }
   | { type: 'USER_LEFT'; userId: string }

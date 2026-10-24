@@ -80,6 +80,20 @@ boardRouter.get(
         return;
       }
 
+      // Authoritative kicked check for REST retrieval
+      const clientId = (req.headers['x-client-id'] as string) || (req.query.clientId as string);
+      if (clientId && room.kickedUserIds && room.kickedUserIds.includes(clientId)) {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: 'USER_KICKED',
+            message: 'You have been removed from this study room by an admin.',
+          },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
       if (room.isExpired) {
         res.status(410).json({
           success: false,
@@ -120,6 +134,19 @@ boardRouter.put(
           error: {
             code: 'INVALID_CODE',
             message: 'Invalid room code format',
+          },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const clientId = (req.headers['x-client-id'] as string) || (req.query.clientId as string);
+      if (clientId && (await boardRoomService.isUserKicked(code, [clientId]))) {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: 'USER_KICKED',
+            message: 'You have been removed from this room by an admin.',
           },
           timestamp: new Date().toISOString(),
         });
@@ -180,6 +207,19 @@ boardRouter.post(
           error: {
             code: 'INVALID_CODE',
             message: 'Invalid room code format',
+          },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const clientId = (req.headers['x-client-id'] as string) || (req.query.clientId as string);
+      if (clientId && (await boardRoomService.isUserKicked(code, [clientId]))) {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: 'USER_KICKED',
+            message: 'You have been removed from this room by an admin.',
           },
           timestamp: new Date().toISOString(),
         });

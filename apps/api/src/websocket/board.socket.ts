@@ -41,6 +41,7 @@ const ANONYMOUS_COLORS = [
 interface ClientSession {
   ws: WebSocket;
   userId: string;
+  clientId: string;
   userName: string;
   userColor: string;
   roomCode: string | null;
@@ -64,6 +65,7 @@ export class BoardWebSocketManager {
   private roomAdmins = new Map<string, Set<string>>();
   private roomPresenters = new Map<string, string | null>();
   private roomMessages = new Map<string, BoardChatMessage[]>();
+  private roomKickedUsers = new Map<string, Set<string>>();
   private saveDebounceTimers = new Map<string, NodeJS.Timeout>();
   private pendingElements = new Map<string, BoardElement[]>();
 
@@ -106,13 +108,16 @@ export class BoardWebSocketManager {
 
   private handleConnection(ws: WebSocket, req: IncomingMessage) {
     const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
-    const queryRoom = url.searchParams.get('room')?.toUpperCase().trim() || null;
+    const queryRoom =
+      (url.searchParams.get('room') || url.searchParams.get('roomCode'))?.toUpperCase().trim() || null;
     const queryName = url.searchParams.get('name')?.trim() || null;
     const queryToken = url.searchParams.get('token')?.trim() || null;
+    const queryClientId = url.searchParams.get('clientId')?.trim() || null;
 
     const session: ClientSession = {
       ws,
       userId: `u_${Math.random().toString(36).substring(2, 9)}`,
+      clientId: queryClientId || `cl_${Math.random().toString(36).substring(2, 10)}`,
       userName:
         queryName || ANONYMOUS_NAMES[Math.floor(Math.random() * ANONYMOUS_NAMES.length)]!,
       userColor:
@@ -190,14 +195,23 @@ export class BoardWebSocketManager {
 
     // If query room was provided in handshake URL, join immediately
     if (queryRoom && /^[A-Z0-9]{6}$/.test(queryRoom)) {
-      this.joinRoom(session, queryRoom, queryToken);
+      this.joinRoom(session, queryRoom, queryToken, queryClientId);
     }
   }
 
-  private async joinRoom(session: ClientSession, roomCode: string, providedCreatorToken?: string | null) {
+  private async joinRoom(
+    session: ClientSession,
+    roomCode: string,
+    providedCreatorToken?: string | null,
+    clientPassedId?: string | null
+  ) {
     // Leave previous room if joined
     if (session.roomCode) {
       this.leaveRoom(session);
+    }
+
+    if (clientPassedId) {
+      session.clientId = clientPassedId;
     }
 
     const roomDetail = await boardRoomService.getRoom(roomCode);
@@ -216,6 +230,29 @@ export class BoardWebSocketManager {
       });
       session.ws.close(4010, 'Room expired');
       return;
+    }
+
+    // Authoritative check if user has been kicked from this room
+    if (!this.roomKickedUsers.has(roomCode)) {
+      this.roomKickedUsers.set(roomCode, new Set(roomDetail.kickedUserIds || []));
+    }
+    const kickedSet = this.roomKickedUsers.get(roomCode)!;
+    if (kickedSet.has(session.clientId) || kickedSet.has(session.userId)) {
+      this.send(session.ws, {
+        type: 'KICKED',
+        reason: 'You have been removed from this study room by an admin.',
+      });
+      try {
+        session.ws.close(4003, 'Kicked by admin');
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    // Populate in-memory message cache from persistent DB if not already loaded
+    if (!this.roomMessages.has(roomCode)) {
+      this.roomMessages.set(roomCode, roomDetail.messages || []);
     }
 
     // Verify creator status
@@ -284,6 +321,7 @@ export class BoardWebSocketManager {
         createdAt: roomDetail.createdAt,
         expiresAt: roomDetail.expiresAt,
         isExpired: roomDetail.isExpired,
+        messages: this.roomMessages.get(roomCode) || [],
       },
       elements: this.pendingElements.get(roomCode) || roomDetail.elements,
       users: activeUsers,
@@ -293,6 +331,7 @@ export class BoardWebSocketManager {
       allowParticipantEditing: this.roomPermissions.get(roomCode) ?? true,
       presenterUserId: currentPresenter,
       recentMessages: this.roomMessages.get(roomCode) || [],
+      messages: this.roomMessages.get(roomCode) || [],
     });
 
     // Notify other peers in this room
@@ -348,13 +387,29 @@ export class BoardWebSocketManager {
   ) {
     const roomCode = session.roomCode;
 
+    // Check if client is kicked
+    if (roomCode && (this.roomKickedUsers.get(roomCode)?.has(session.clientId) || this.roomKickedUsers.get(roomCode)?.has(session.userId))) {
+      this.send(session.ws, {
+        type: 'KICKED',
+        reason: 'You have been removed from this study room by an admin.',
+      });
+      try {
+        session.ws.close(4003, 'Kicked by admin');
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
     switch (msg.type) {
       case 'JOIN': {
         const token = msg.creatorToken || (msg as any).token;
         if (msg.userName) session.userName = msg.userName;
         if (msg.userColor) session.userColor = msg.userColor;
         if (token) session.creatorToken = token;
-        await this.joinRoom(session, msg.roomCode.toUpperCase().trim(), token);
+        const passedClientId = (msg as any).clientId;
+        if (passedClientId) session.clientId = passedClientId;
+        await this.joinRoom(session, msg.roomCode.toUpperCase().trim(), token, passedClientId);
         break;
       }
 
@@ -491,7 +546,7 @@ export class BoardWebSocketManager {
           return;
         }
 
-        if (target.userId === session.userId) {
+        if (target.userId === session.userId || target.clientId === session.clientId) {
           this.send(session.ws, {
             type: 'ERROR',
             message: 'You cannot kick yourself from the room.',
@@ -517,13 +572,23 @@ export class BoardWebSocketManager {
 
         const reason = msg.reason || 'You have been removed from this study session by an admin.';
 
-        // Notify target directly
+        // 1. Authoritative persistence: Record in MongoDB
+        await boardRoomService.kickUser(roomCode, [target.clientId, target.userId]);
+
+        // 2. In-memory set
+        if (!this.roomKickedUsers.has(roomCode)) {
+          this.roomKickedUsers.set(roomCode, new Set());
+        }
+        this.roomKickedUsers.get(roomCode)!.add(target.userId);
+        this.roomKickedUsers.get(roomCode)!.add(target.clientId);
+
+        // 3. Notify target directly
         this.send(target.ws, {
           type: 'KICKED',
           reason,
         });
 
-        // Broadcast to everyone that the user was kicked
+        // 4. Broadcast to everyone that the user was kicked
         this.broadcastToRoom(roomCode, {
           type: 'USER_KICKED',
           userId: target.userId,
@@ -551,10 +616,18 @@ export class BoardWebSocketManager {
       case 'CHAT_MESSAGE': {
         if (!roomCode) return;
         const trimmed = msg.text?.trim();
-        if (!trimmed) return;
+        if (!trimmed) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Message cannot be empty.',
+          });
+          return;
+        }
+
+        const messageId = (msg as any).messageId || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
         const chatMessage: BoardChatMessage = {
-          id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          id: messageId,
           userId: session.userId,
           userName: session.userName,
           userColor: session.userColor,
@@ -562,16 +635,24 @@ export class BoardWebSocketManager {
           isOwner: session.isCreator,
           text: trimmed,
           timestamp: Date.now(),
+          status: 'sent',
         };
 
         if (!this.roomMessages.has(roomCode)) {
           this.roomMessages.set(roomCode, []);
         }
         const buffer = this.roomMessages.get(roomCode)!;
-        buffer.push(chatMessage);
-        if (buffer.length > 60) {
-          buffer.shift();
+        if (!buffer.some(m => m.id === chatMessage.id)) {
+          buffer.push(chatMessage);
+          if (buffer.length > 100) {
+            buffer.shift();
+          }
         }
+
+        // Persist message to MongoDB asynchronously
+        boardRoomService.addChatMessage(roomCode, chatMessage).catch(err => {
+          console.error(`[BoardSocket] Failed to persist chat message in room ${roomCode}:`, err);
+        });
 
         // Broadcast to entire room including sender
         this.broadcastToRoom(roomCode, {
