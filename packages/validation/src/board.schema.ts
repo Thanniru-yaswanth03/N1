@@ -133,6 +133,9 @@ export const boardSocketClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('STOP_PRESENTING'),
   }),
+  z.object({
+    type: z.literal('PING'),
+  }),
 ]);
 
 export type CreateBoardRoomInput = z.infer<typeof createBoardRoomSchema>;

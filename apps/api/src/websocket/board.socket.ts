@@ -671,6 +671,14 @@ export class BoardWebSocketManager {
         });
         break;
       }
+
+      case 'PING': {
+        session.isAlive = true;
+        this.send(session.ws, {
+          type: 'PONG',
+        });
+        break;
+      }
     }
   }
 

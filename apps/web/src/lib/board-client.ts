@@ -261,6 +261,7 @@ export function connectBoardSocket(
   let isClosedManually = false;
   let hasConnectedOnce = false;
   let reconnectTimeout: NodeJS.Timeout | null = null;
+  let pingInterval: NodeJS.Timeout | null = null;
 
   const resolvedToken = creatorToken || getStoredCreatorToken(roomCode);
 
@@ -290,6 +291,14 @@ export function connectBoardSocket(
         hasConnectedOnce = true;
         callbacks.onConnectionChange(true);
         callbacks.onConnectionStatusChange?.('CONNECTED');
+
+        // Application-level keepalive heartbeat every 18 seconds
+        if (pingInterval) clearInterval(pingInterval);
+        pingInterval = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'PING' }));
+          }
+        }, 18000);
       };
 
       ws.onmessage = event => {
@@ -353,6 +362,9 @@ export function connectBoardSocket(
             case 'PRESENTATION_STATE':
               callbacks.onPresentationState?.(msg);
               break;
+            case 'PONG':
+              // Keepalive acknowledged
+              break;
           }
         } catch {
           // ignore malformed message
@@ -360,6 +372,10 @@ export function connectBoardSocket(
       };
 
       ws.onclose = event => {
+        if (pingInterval) {
+          clearInterval(pingInterval);
+          pingInterval = null;
+        }
         callbacks.onConnectionChange(false);
         if (isClosedManually) {
           callbacks.onConnectionStatusChange?.('DISCONNECTED');
@@ -452,6 +468,10 @@ export function connectBoardSocket(
     },
     disconnect: () => {
       isClosedManually = true;
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (ws) {
         ws.close();

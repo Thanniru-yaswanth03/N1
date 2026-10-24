@@ -119,7 +119,8 @@ export type BoardSocketClientMessage =
   | { type: 'PROMOTE_USER'; targetUserId: string }
   | { type: 'REVOKE_ADMIN'; targetUserId: string }
   | { type: 'START_PRESENTING' }
-  | { type: 'STOP_PRESENTING' };
+  | { type: 'STOP_PRESENTING' }
+  | { type: 'PING' };
 
 export type BoardSocketServerMessage =
   | {
@@ -192,4 +193,5 @@ export type BoardSocketServerMessage =
       type: 'PRESENTATION_STATE';
       presenterUserId: string | null;
       presenterName?: string;
-    };
+    }
+  | { type: 'PONG' };

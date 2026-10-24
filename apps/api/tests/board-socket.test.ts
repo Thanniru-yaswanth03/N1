@@ -720,4 +720,23 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
     const stopMsg = await presStopPromise;
     expect(stopMsg.presenterUserId).toBeNull();
   });
+
+  it('responds with PONG to application-level PING keepalive message', async () => {
+    const room = await boardRoomService.createRoom({ title: 'PingTest', template: 'blank' });
+
+    const ws = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(ws);
+    await new Promise<void>(resolve => ws.on('open', resolve));
+
+    await new Promise<void>(resolve => {
+      ws.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'PingUser' }));
+      ws.once('message', () => resolve());
+    });
+
+    const pongPromise = waitForMessage(ws, 'PONG');
+    ws.send(JSON.stringify({ type: 'PING' }));
+
+    const pong = await pongPromise;
+    expect(pong.type).toBe('PONG');
+  });
 });

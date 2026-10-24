@@ -83,6 +83,24 @@ export default function StudyBoardRoomPage() {
   // Modals
   const [shareModalOpen, setShareModalOpen] = useState(false);
 
+  // Stable refs to prevent tearing down WebSocket connections when UI state changes
+  const isFollowingPresenterRef = useRef(isFollowingPresenter);
+  useEffect(() => {
+    isFollowingPresenterRef.current = isFollowingPresenter;
+  }, [isFollowingPresenter]);
+
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  const presenterUserIdRef = useRef(presenterUserId);
+  useEffect(() => {
+    presenterUserIdRef.current = presenterUserId;
+  }, [presenterUserId]);
+
+  const dbSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Effective permission: Room Admins (and creator) can always edit. Participants edit when allowed.
   const isAdmin = userRole === 'admin' || isCreator;
   const canEdit = isAdmin || allowParticipantEditing;
@@ -139,7 +157,26 @@ export default function StudyBoardRoomPage() {
 
     const socket = connectBoardSocket(roomCode, {
       onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing, role, presenterId) => {
-        setElements(initialElements);
+        setElements(prev => {
+          if (prev.length === 0) return initialElements;
+          // Smart reconciliation: never wipe local work if server state is empty or stale on reconnect
+          const mergedMap = new Map<string, BoardElement>();
+          for (const el of initialElements) mergedMap.set(el.id, el);
+          for (const el of prev) {
+            const serverEl = mergedMap.get(el.id);
+            if (!serverEl || (el.updatedAt && (!serverEl.updatedAt || el.updatedAt >= serverEl.updatedAt))) {
+              mergedMap.set(el.id, el);
+            }
+          }
+          const merged = Array.from(mergedMap.values());
+          // If local client had unpersisted elements, sync them to server
+          if (merged.length > initialElements.length) {
+            socketRef.current?.sendElementsUpdate(merged);
+            syncBoardElements(roomCode, merged);
+          }
+          return merged;
+        });
+
         setPeerUsers(users);
         setCurrentUser(me);
         setHistory([initialElements]);
@@ -188,7 +225,7 @@ export default function StudyBoardRoomPage() {
           }
           return prev.filter(u => u.id !== userId);
         });
-        if (presenterUserId === userId) {
+        if (presenterUserIdRef.current === userId) {
           setPresenterUserId(null);
         }
       },
@@ -237,7 +274,7 @@ export default function StudyBoardRoomPage() {
         });
       },
       onViewportUpdate: vp => {
-        if (isFollowingPresenter) {
+        if (isFollowingPresenterRef.current) {
           setRemoteViewport({ panX: vp.panX, panY: vp.panY, zoom: vp.zoom });
         }
       },
@@ -260,7 +297,7 @@ export default function StudyBoardRoomPage() {
         setPeerUsers(prev =>
           prev.map(u => (u.id === update.userId ? { ...u, role: update.role } : u))
         );
-        if (currentUser?.id === update.userId) {
+        if (currentUserRef.current?.id === update.userId) {
           setUserRole(update.role);
           setCurrentUser(prev => (prev ? { ...prev, role: update.role } : prev));
           setRecentActivity({
@@ -306,7 +343,7 @@ export default function StudyBoardRoomPage() {
       socket.disconnect();
       if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
     };
-  }, [roomCode, isExpired, loading, isFollowingPresenter, currentUser?.id, presenterUserId]);
+  }, [roomCode, isExpired, loading]);
 
   // Push history state with deduplication to prevent dead undo clicks
   const handleHistoryPush = useCallback(
@@ -410,9 +447,16 @@ export default function StudyBoardRoomPage() {
   const handleElementsChange = useCallback(
     (nextElements: BoardElement[]) => {
       if (!canEdit) return;
+      // 1. Instant WebSocket broadcast to connected classroom peers
       socketRef.current?.sendElementsUpdate(nextElements);
+
+      // 2. Debounced REST database persistence (within 800ms) for high durability
+      if (dbSyncTimerRef.current) clearTimeout(dbSyncTimerRef.current);
+      dbSyncTimerRef.current = setTimeout(() => {
+        syncBoardElements(roomCode, nextElements);
+      }, 800);
     },
-    [canEdit]
+    [canEdit, roomCode]
   );
 
   // Live drawing chunk streamer
