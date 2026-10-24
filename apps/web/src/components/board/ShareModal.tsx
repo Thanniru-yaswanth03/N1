@@ -10,11 +10,14 @@ interface ShareModalProps {
   onClose: () => void;
   roomCode: string;
   roomTitle: string;
+  isCreator?: boolean;
+  creatorToken?: string | null;
 }
 
-export function ShareModal({ isOpen, onClose, roomCode, roomTitle }: ShareModalProps) {
+export function ShareModal({ isOpen, onClose, roomCode, roomTitle, isCreator = false, creatorToken = null }: ShareModalProps) {
   const [mounted, setMounted] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedHostLink, setCopiedHostLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [showQr, setShowQr] = useState(true);
   const [supportsNativeShare, setSupportsNativeShare] = useState(false);
@@ -205,6 +208,43 @@ export function ShareModal({ isOpen, onClose, roomCode, roomTitle }: ShareModalP
             </Button>
           </div>
         </div>
+
+        {/* Host Secret Link for Room Owner */}
+        {isCreator && creatorToken && (
+          <div className="p-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                <span>👑</span>
+                <span>Host Secret Link (Super Admin)</span>
+              </span>
+              <span className="text-[9px] font-mono text-amber-400 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/30">
+                Keep Secret
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-300">
+              Open this link on your phone or other devices to instantly regain full Host authority and kicking powers.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={`${shareUrl}?host=${creatorToken}`}
+                className="flex-1 bg-black/40 px-2.5 py-1 text-xs text-amber-200 font-mono select-all focus:outline-none truncate rounded-lg border border-amber-500/20"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(`${shareUrl}?host=${creatorToken}`);
+                  setCopiedHostLink(true);
+                  setTimeout(() => setCopiedHostLink(false), 2000);
+                }}
+                className="px-3 py-1 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black rounded-lg transition-all shadow-sm shrink-0"
+              >
+                {copiedHostLink ? 'Copied!' : 'Copy Host Link'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Native Share & QR Toggle Buttons */}
         <div className="grid grid-cols-2 gap-2 pt-1">

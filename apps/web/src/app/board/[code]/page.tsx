@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   BoardElement,
@@ -16,6 +16,8 @@ import {
   connectBoardSocket,
   syncBoardElements,
   clearBoardElements,
+  claimBoardHost,
+  saveCreatorToken,
   BoardRoomDetail,
   BoardConnectionStatus,
   getStoredCreatorToken,
@@ -38,7 +40,19 @@ import { Button } from '../../../components/ui/Button';
 export default function StudyBoardRoomPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const roomCode = ((params?.code as string) || '').toUpperCase().trim();
+
+  // Read host/creator token from URL query params (e.g. ?host=cr_... or ?token=cr_...)
+  useEffect(() => {
+    if (!roomCode || !searchParams) return;
+    const urlToken = searchParams.get('host') || searchParams.get('token') || searchParams.get('creatorToken');
+    if (urlToken) {
+      saveCreatorToken(roomCode, urlToken);
+      setIsCreator(true);
+      setUserRole('admin');
+    }
+  }, [roomCode, searchParams]);
 
   // Room metadata & Role state
   const [room, setRoom] = useState<BoardRoomDetail | null>(null);
@@ -151,7 +165,7 @@ export default function StudyBoardRoomPage() {
 
     const storedToken = getStoredCreatorToken(roomCode);
 
-    fetchBoardRoom(roomCode)
+    fetchBoardRoom(roomCode, storedToken)
       .then(data => {
         if (!mounted) return;
         if (data.isExpired) {
@@ -197,57 +211,61 @@ export default function StudyBoardRoomPage() {
 
   // 2. Establish Real-Time WebSocket Connection
   useEffect(() => {
-    if (!roomCode || isExpired || loading || kickedModalReason) return;
+    const storedCreatorToken = getStoredCreatorToken(roomCode);
 
-    const socket = connectBoardSocket(roomCode, {
-      onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing, role, presenterId, recentMessages) => {
-        setElements(prev => {
-          if (prev.length === 0) return initialElements;
-          // Smart reconciliation: never wipe local work if server state is empty or stale on reconnect
-          const mergedMap = new Map<string, BoardElement>();
-          for (const el of initialElements) mergedMap.set(el.id, el);
-          for (const el of prev) {
-            const serverEl = mergedMap.get(el.id);
-            if (!serverEl || (el.updatedAt && (!serverEl.updatedAt || el.updatedAt >= serverEl.updatedAt))) {
-              mergedMap.set(el.id, el);
+    const socket = connectBoardSocket(
+      roomCode,
+      {
+        onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing, role, presenterId, recentMessages) => {
+          setElements(prev => {
+            if (prev.length === 0) return initialElements;
+            // Smart reconciliation: never wipe local work if server state is empty or stale on reconnect
+            const mergedMap = new Map<string, BoardElement>();
+            for (const el of initialElements) mergedMap.set(el.id, el);
+            for (const el of prev) {
+              const serverEl = mergedMap.get(el.id);
+              if (!serverEl || (el.updatedAt && (!serverEl.updatedAt || el.updatedAt >= serverEl.updatedAt))) {
+                mergedMap.set(el.id, el);
+              }
             }
-          }
-          const merged = Array.from(mergedMap.values());
-          // If local client had unpersisted elements, sync them to server
-          if (merged.length > initialElements.length) {
-            socketRef.current?.sendElementsUpdate(merged);
-            syncBoardElements(roomCode, merged);
-          }
-          return merged;
-        });
+            const merged = Array.from(mergedMap.values());
+            // If local client had unpersisted elements, sync them to server
+            if (merged.length > initialElements.length) {
+              socketRef.current?.sendElementsUpdate(merged);
+              syncBoardElements(roomCode, merged);
+            }
+            return merged;
+          });
 
-        setPeerUsers(users);
-        setCurrentUser(me);
-        setHistory([initialElements]);
-        setHistoryIndex(0);
-        historyIndexRef.current = 0;
-        historyRef.current = [initialElements];
-        if (allowEditing !== undefined) {
-          setAllowParticipantEditing(allowEditing);
-        }
-        if (isCreatorFlag !== undefined) {
-          setIsCreator(isCreatorFlag);
-        }
-        if (role) {
-          setUserRole(role);
-        } else if (isCreatorFlag || me?.role === 'admin' || me?.isOwner) {
-          setUserRole('admin');
-        }
-        if (presenterId !== undefined) {
-          setPresenterUserId(presenterId);
-        }
-        if (recentMessages && recentMessages.length > 0) {
-          setChatMessages(recentMessages);
-        }
-        if (me?.handRaised) {
-          setHandRaised(true);
-        }
-      },
+          setPeerUsers(users);
+          setCurrentUser(me);
+          setHistory([initialElements]);
+          setHistoryIndex(0);
+          historyIndexRef.current = 0;
+          historyRef.current = [initialElements];
+          if (allowEditing !== undefined) {
+            setAllowParticipantEditing(allowEditing);
+          }
+          const hasLocalToken = Boolean(getStoredCreatorToken(roomCode));
+          const effectiveIsCreator = isCreatorFlag || hasLocalToken || Boolean(me?.isOwner);
+          setIsCreator(effectiveIsCreator);
+          if (effectiveIsCreator) {
+            setUserRole('admin');
+          } else if (role) {
+            setUserRole(role);
+          } else if (me?.role === 'admin' || me?.isOwner) {
+            setUserRole('admin');
+          }
+          if (presenterId !== undefined) {
+            setPresenterUserId(presenterId);
+          }
+          if (recentMessages && recentMessages.length > 0) {
+            setChatMessages(recentMessages);
+          }
+          if (me?.handRaised) {
+            setHandRaised(true);
+          }
+        },
       onUserJoined: user => {
         setPeerUsers(prev => {
           if (prev.some(u => u.id === user.id)) return prev;
@@ -460,8 +478,20 @@ export default function StudyBoardRoomPage() {
       onRoomExpired: () => {
         setIsExpired(true);
       },
+      onHostClaimed: token => {
+        if (token) saveCreatorToken(roomCode, token);
+        setIsCreator(true);
+        setUserRole('admin');
+        setRecentActivity({
+          userName: 'Host Authority',
+          action: 'Host privileges verified and claimed 👑',
+          timestamp: Date.now(),
+        });
+        if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+        activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
+      },
       onError: msg => {
-        console.warn('[Board] Socket error:', msg);
+        setLoadError(msg);
       },
       onConnectionChange: connected => {
         setIsConnected(connected);
@@ -470,7 +500,10 @@ export default function StudyBoardRoomPage() {
         setConnectionStatus(status);
         setIsConnected(status === 'CONNECTED');
       },
-    });
+    },
+    undefined,
+    storedCreatorToken
+  );
 
     socketRef.current = socket;
 
@@ -723,6 +756,33 @@ export default function StudyBoardRoomPage() {
     }
   }, [currentUser?.id]);
 
+  const handleLowerAllHands = useCallback(() => {
+    socketRef.current?.sendLowerAllHands();
+    setHandRaised(false);
+    setRecentActivity({
+      userName: 'Host',
+      action: 'lowered all student hands ✋',
+      timestamp: Date.now(),
+    });
+    if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+    activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
+  }, []);
+
+  const handleClaimHost = useCallback(async (token: string): Promise<boolean> => {
+    try {
+      const success = await claimBoardHost(roomCode, token);
+      if (success) {
+        socketRef.current?.sendClaimHost(token);
+        setIsCreator(true);
+        setUserRole('admin');
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }, [roomCode]);
+
   const handleSendMessage = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -902,6 +962,7 @@ export default function StudyBoardRoomPage() {
         currentUser={currentUser}
         isAdmin={isAdmin}
         isCreator={isCreator}
+        creatorToken={getStoredCreatorToken(roomCode)}
         presenterUserId={presenterUserId}
         isFollowingPresenter={isFollowingPresenter}
         onToggleFollowPresenter={handleToggleFollowPresenter}
@@ -911,6 +972,8 @@ export default function StudyBoardRoomPage() {
         onRevokeAdmin={handleRevokeAdmin}
         onKickUser={handleKickUser}
         onLowerHand={handleLowerHand}
+        onLowerAllHands={handleLowerAllHands}
+        onClaimHost={handleClaimHost}
         onToggleChat={() => {
           setChatOpen(prev => !prev);
           setUnreadMessageCount(0);
@@ -1065,6 +1128,8 @@ export default function StudyBoardRoomPage() {
         onClose={() => setShareModalOpen(false)}
         roomCode={roomCode}
         roomTitle={room?.title || 'Study Session'}
+        isCreator={isCreator}
+        creatorToken={getStoredCreatorToken(roomCode)}
       />
 
       {/* ── Classroom Chat & Q&A Drawer ── */}
@@ -1078,6 +1143,8 @@ export default function StudyBoardRoomPage() {
         onSendReaction={handleSendReaction}
         handRaised={handRaised}
         onToggleRaiseHand={handleToggleRaiseHand}
+        isAdmin={isAdmin}
+        onKickUser={handleKickUser}
       />
 
       {/* ── Floating Reaction Bursts ── */}

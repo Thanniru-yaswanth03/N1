@@ -57,7 +57,14 @@ export function saveCreatorToken(code: string, token: string): void {
 
 export function getStoredCreatorToken(code: string): string | null {
   try {
-    return localStorage.getItem(`n1_board_creator_${code.toUpperCase().trim()}`);
+    const clean = code.toUpperCase().trim();
+    return (
+      localStorage.getItem(`n1_board_creator_${clean}`) ||
+      localStorage.getItem(`board_creator_token_${clean}`) ||
+      localStorage.getItem(`board_creator_${clean}`) ||
+      localStorage.getItem(`creator_token_${clean}`) ||
+      null
+    );
   } catch {
     return null;
   }
@@ -141,12 +148,14 @@ export async function createBoardRoom(
 /**
  * Fetches an active room by code.
  */
-export async function fetchBoardRoom(code: string): Promise<BoardRoomDetail> {
+export async function fetchBoardRoom(code: string, token?: string | null): Promise<BoardRoomDetail> {
   const cleanCode = code.toUpperCase().trim();
   const clientId = getBoardClientId();
   const apiBase = getBoardApiBase();
+  const resolvedToken = token || getStoredCreatorToken(cleanCode);
+  const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
 
-  const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}?clientId=${encodeURIComponent(clientId)}`);
+  const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}?clientId=${encodeURIComponent(clientId)}${tokenParam}`);
   const json = await res.json();
 
   if (res.status === 403 && json.error?.code === 'USER_KICKED') {
@@ -174,6 +183,10 @@ export async function fetchBoardRoom(code: string): Promise<BoardRoomDetail> {
     throw new Error(json.error?.message || 'Failed to load study room');
   }
 
+  if (json.data?.isCreator && json.data?.creatorToken) {
+    saveCreatorToken(cleanCode, json.data.creatorToken);
+  }
+
   saveRecentBoard({
     code: json.data.code,
     title: json.data.title,
@@ -182,6 +195,29 @@ export async function fetchBoardRoom(code: string): Promise<BoardRoomDetail> {
   });
 
   return json.data;
+}
+
+/**
+ * Claims host authority using a secret Host Key.
+ */
+export async function claimBoardHost(code: string, token: string): Promise<boolean> {
+  const cleanCode = code.toUpperCase().trim();
+  const apiBase = getBoardApiBase();
+  try {
+    const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}/claim-host`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token.trim() }),
+    });
+    const json = await res.json();
+    if (res.ok && json.success && json.data?.isCreator) {
+      saveCreatorToken(cleanCode, json.data.token || token.trim());
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -272,7 +308,7 @@ export interface BoardSocketCallbacks {
   onElementSync: (element: BoardElement, action: 'add' | 'update' | 'delete') => void;
   onBoardCleared: () => void;
   onRoomExpired: () => void;
-  onError: (message: string) => void;
+  onError?: (message: string) => void;
   onConnectionChange: (connected: boolean) => void;
   onConnectionStatusChange?: (status: BoardConnectionStatus) => void;
   onChatMessage?: (message: BoardChatMessage) => void;
@@ -313,6 +349,7 @@ export interface BoardSocketCallbacks {
     presenterUserId: string | null;
     presenterName?: string;
   }) => void;
+  onHostClaimed?: (creatorToken?: string) => void;
 }
 
 export function connectBoardSocket(
@@ -342,6 +379,8 @@ export function connectBoardSocket(
   sendChatMessage: (text: string, messageId?: string) => void;
   sendRaiseHand: (raised: boolean) => void;
   sendLowerHand: (targetUserId?: string) => void;
+  sendLowerAllHands: () => void;
+  sendClaimHost: (token: string) => void;
   sendReaction: (emoji: string) => void;
   sendStartPresenting: () => void;
   sendStopPresenting: () => void;
@@ -428,6 +467,12 @@ export function connectBoardSocket(
               markUserKicked(roomCode);
               callbacks.onKicked?.(msg.reason);
               break;
+            case 'HOST_CLAIMED':
+              if (msg.creatorToken) {
+                saveCreatorToken(roomCode, msg.creatorToken);
+              }
+              callbacks.onHostClaimed?.(msg.creatorToken);
+              break;
             case 'CHAT_BROADCAST':
               callbacks.onChatMessage?.(msg.message);
               break;
@@ -453,7 +498,7 @@ export function connectBoardSocket(
               callbacks.onRoomExpired();
               break;
             case 'ERROR':
-              callbacks.onError(msg.message);
+              callbacks.onError?.(msg.message);
               break;
             case 'LIVE_DRAW_CHUNK':
               callbacks.onLiveDrawChunk?.(msg);
@@ -589,6 +634,12 @@ export function connectBoardSocket(
     },
     sendLowerHand: (targetUserId?: string) => {
       send({ type: 'LOWER_HAND', targetUserId });
+    },
+    sendLowerAllHands: () => {
+      send({ type: 'LOWER_HAND', targetUserId: 'ALL' });
+    },
+    sendClaimHost: (token: string) => {
+      send({ type: 'CLAIM_HOST', token });
     },
     sendReaction: (emoji: string) => {
       send({ type: 'SEND_REACTION', emoji });

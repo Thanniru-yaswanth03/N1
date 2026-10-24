@@ -687,8 +687,32 @@ export class BoardWebSocketManager {
 
       case 'LOWER_HAND': {
         if (!roomCode) return;
+        const isAdmin = session.role === 'admin' || session.isCreator;
+        if (msg.targetUserId === 'ALL' && isAdmin) {
+          const clients = this.roomClients.get(roomCode);
+          clients?.forEach(c => {
+            if (c.handRaised) {
+              c.handRaised = false;
+              this.broadcastToRoom(roomCode, {
+                type: 'HAND_STATE',
+                userId: c.userId,
+                userName: c.userName,
+                handRaised: false,
+              });
+            }
+          });
+          this.broadcastToRoom(roomCode, {
+            type: 'ACTIVITY_INDICATOR',
+            userId: session.userId,
+            userName: session.userName,
+            action: 'lowered all participants\' hands ✋',
+            timestamp: Date.now(),
+          });
+          break;
+        }
+
         let targetUser = session;
-        if (msg.targetUserId && (session.role === 'admin' || session.isCreator)) {
+        if (msg.targetUserId && isAdmin) {
           const clients = this.roomClients.get(roomCode);
           const found = Array.from(clients || []).find(c => c.userId === msg.targetUserId);
           if (found) {
@@ -702,6 +726,48 @@ export class BoardWebSocketManager {
           userId: targetUser.userId,
           userName: targetUser.userName,
           handRaised: false,
+        });
+        break;
+      }
+
+      case 'CLAIM_HOST': {
+        if (!roomCode) return;
+        const { isCreator, token } = await boardRoomService.verifyOrClaimCreator(roomCode, msg.token);
+        if (!isCreator) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Invalid Host Key. Host authority could not be claimed.',
+          });
+          return;
+        }
+
+        session.isCreator = true;
+        session.creatorToken = token;
+        session.role = 'admin';
+        if (!this.roomAdmins.has(roomCode)) {
+          this.roomAdmins.set(roomCode, new Set());
+        }
+        this.roomAdmins.get(roomCode)!.add(session.userId);
+
+        this.send(session.ws, {
+          type: 'HOST_CLAIMED',
+          success: true,
+          creatorToken: token,
+        });
+
+        this.broadcastToRoom(roomCode, {
+          type: 'ROLE_UPDATED',
+          userId: session.userId,
+          role: 'admin',
+          userName: session.userName,
+        });
+
+        this.broadcastToRoom(roomCode, {
+          type: 'ACTIVITY_INDICATOR',
+          userId: session.userId,
+          userName: session.userName,
+          action: 'claimed Classroom Host authority 👑',
+          timestamp: Date.now(),
         });
         break;
       }

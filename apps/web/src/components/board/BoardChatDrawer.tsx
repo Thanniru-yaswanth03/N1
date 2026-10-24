@@ -13,6 +13,8 @@ export interface BoardChatDrawerProps {
   onSendReaction: (emoji: string) => void;
   handRaised: boolean;
   onToggleRaiseHand: () => void;
+  isAdmin?: boolean;
+  onKickUser?: (userId: string) => void;
 }
 
 const QUICK_REACTIONS = ['👏', '👍', '❤️', '💡', '🔥', '🎉', '😂', '🙌'];
@@ -27,6 +29,8 @@ export function BoardChatDrawer({
   onSendReaction,
   handRaised,
   onToggleRaiseHand,
+  isAdmin = false,
+  onKickUser,
 }: BoardChatDrawerProps) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -172,7 +176,7 @@ export function BoardChatDrawer({
             messages.map(msg => {
               const isSelf = msg.userId === currentUser?.id;
               const isOwner = msg.isOwner;
-              const isAdmin = msg.role === 'admin' || isOwner;
+              const isAuthorAdmin = msg.role === 'admin' || isOwner;
 
               const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {
                 hour: '2-digit',
@@ -198,7 +202,7 @@ export function BoardChatDrawer({
                     className={`max-w-[82%] rounded-2xl p-2.5 text-xs shadow-md space-y-1 ${
                       isSelf
                         ? 'bg-cyan-600/25 border border-cyan-500/40 text-cyan-50 rounded-tr-none'
-                        : isAdmin
+                        : isAuthorAdmin
                         ? 'bg-purple-950/40 border border-purple-500/40 text-purple-100 rounded-tl-none'
                         : 'bg-white/5 border border-white/10 text-zinc-200 rounded-tl-none'
                     }`}
@@ -214,18 +218,34 @@ export function BoardChatDrawer({
                           </span>
                         )}
                         {isOwner ? (
-                          <span className="text-[9px] font-bold text-amber-300 bg-amber-500/20 px-1 rounded border border-amber-500/30">
-                            👑 Creator
+                          <span className="text-[9px] font-extrabold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded border border-amber-500/40 shadow-xs">
+                            👑 Host
                           </span>
-                        ) : isAdmin ? (
+                        ) : msg.role === 'admin' ? (
                           <span className="text-[9px] font-bold text-cyan-300 bg-cyan-500/20 px-1 rounded border border-cyan-500/30">
-                            🛡️ Admin
+                            🛡️ Co-Host
                           </span>
                         ) : null}
                       </div>
-                      <span className="text-[9px] text-zinc-500 shrink-0 font-mono">
-                        {timeStr}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isAdmin && !isSelf && !isOwner && onKickUser && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`Remove ${msg.userName} from this study room?`)) {
+                                onKickUser(msg.userId);
+                              }
+                            }}
+                            title={`Kick ${msg.userName}`}
+                            className="text-[9px] text-rose-400 hover:text-white px-1.5 py-0.5 rounded bg-rose-500/15 hover:bg-rose-600 border border-rose-500/30 transition-all font-semibold"
+                          >
+                            🚫 Kick
+                          </button>
+                        )}
+                        <span className="text-[9px] text-zinc-500 font-mono">
+                          {timeStr}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="whitespace-pre-wrap break-words leading-relaxed">

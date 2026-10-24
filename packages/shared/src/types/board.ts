@@ -140,6 +140,7 @@ export type BoardSocketClientMessage =
   | { type: 'SEND_REACTION'; emoji: string }
   | { type: 'START_PRESENTING' }
   | { type: 'STOP_PRESENTING' }
+  | { type: 'CLAIM_HOST'; token: string }
   | { type: 'PING' };
 
 export type BoardSocketServerMessage =
@@ -160,6 +161,7 @@ export type BoardSocketServerMessage =
   | { type: 'USER_LEFT'; userId: string }
   | { type: 'USER_KICKED'; userId: string; userName: string; reason?: string }
   | { type: 'KICKED'; reason?: string }
+  | { type: 'HOST_CLAIMED'; success: boolean; creatorToken?: string }
   | { type: 'CHAT_BROADCAST'; message: BoardChatMessage }
   | { type: 'HAND_STATE'; userId: string; userName: string; handRaised: boolean }
   | { type: 'REACTION_BURST'; id: string; userId: string; userName: string; emoji: string }

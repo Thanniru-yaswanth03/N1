@@ -18,6 +18,8 @@ export interface BoardRoomDetailResult {
   isExpired: boolean;
   timeRemainingSeconds: number;
   allowParticipantEditing: boolean;
+  isCreator?: boolean;
+  creatorToken?: string;
 }
 
 export class BoardRoomService {
@@ -70,7 +72,7 @@ export class BoardRoomService {
    * Retrieves an active Study Board room by code.
    * Enforces automatic expiration.
    */
-  async getRoom(code: string): Promise<BoardRoomDetailResult | null> {
+  async getRoom(code: string, providedToken?: string | null): Promise<BoardRoomDetailResult | null> {
     const room = await this.repo.findByCode(code);
     if (!room) {
       return null;
@@ -93,12 +95,17 @@ export class BoardRoomService {
         isExpired: true,
         timeRemainingSeconds: 0,
         allowParticipantEditing: false,
+        isCreator: false,
       };
     }
 
     const timeRemainingSeconds = Math.max(
       0,
       Math.floor((room.expiresAt.getTime() - now.getTime()) / 1000)
+    );
+
+    const isCreator = Boolean(
+      room.creatorToken && providedToken && room.creatorToken === providedToken
     );
 
     return {
@@ -113,6 +120,8 @@ export class BoardRoomService {
       isExpired: false,
       timeRemainingSeconds,
       allowParticipantEditing: room.allowParticipantEditing ?? true,
+      isCreator,
+      creatorToken: isCreator ? room.creatorToken : undefined,
     };
   }
 

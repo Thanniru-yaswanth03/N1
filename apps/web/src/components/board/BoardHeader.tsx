@@ -19,6 +19,7 @@ export interface BoardHeaderProps {
   currentUser: ConnectedBoardUser | null;
   isAdmin?: boolean;
   isCreator?: boolean;
+  creatorToken?: string | null;
   presenterUserId?: string | null;
   isFollowingPresenter?: boolean;
   onToggleFollowPresenter?: () => void;
@@ -28,6 +29,8 @@ export interface BoardHeaderProps {
   onRevokeAdmin?: (userId: string) => void;
   onKickUser?: (userId: string) => void;
   onLowerHand?: (userId: string) => void;
+  onLowerAllHands?: () => void;
+  onClaimHost?: (token: string) => Promise<boolean>;
   onToggleChat?: () => void;
   unreadMessageCount?: number;
   handRaised?: boolean;
@@ -55,6 +58,7 @@ export function BoardHeader({
   currentUser,
   isAdmin = false,
   isCreator = false,
+  creatorToken = null,
   presenterUserId = null,
   isFollowingPresenter = true,
   onToggleFollowPresenter,
@@ -64,6 +68,8 @@ export function BoardHeader({
   onRevokeAdmin,
   onKickUser,
   onLowerHand,
+  onLowerAllHands,
+  onClaimHost,
   onToggleChat,
   unreadMessageCount = 0,
   handRaised = false,
@@ -79,10 +85,16 @@ export function BoardHeader({
   onSelectTemplate,
 }: BoardHeaderProps) {
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedHostLink, setCopiedHostLink] = useState(false);
   const [participantsModalOpen, setParticipantsModalOpen] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [hostMenuOpen, setHostMenuOpen] = useState(false);
+  const [claimHostModalOpen, setClaimHostModalOpen] = useState(false);
+  const [claimKeyInput, setClaimKeyInput] = useState('');
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [isClaiming, setIsClaiming] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<string>('');
 
   // Live expiration countdown calculation
@@ -186,20 +198,211 @@ export function BoardHeader({
             </span>
           )}
 
-          {/* Role Badge (Admin or Participant) */}
+          {/* Role Badge (Host, Admin, or Participant) */}
           {isCreator ? (
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0 hidden xs:inline-flex items-center gap-1">
-              👑 Creator
+            <span className="px-2 sm:px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide uppercase bg-gradient-to-r from-amber-500/25 via-yellow-500/20 to-amber-500/25 text-amber-300 border border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.25)] shrink-0 inline-flex items-center gap-1">
+              <span>👑</span>
+              <span>Host</span>
             </span>
           ) : isAdmin ? (
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0 hidden xs:inline-flex items-center gap-1">
-              🛡️ Admin
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0 inline-flex items-center gap-1">
+              <span>🛡️</span>
+              <span>Admin</span>
             </span>
           ) : (
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-white/10 text-zinc-300 border border-white/15 shrink-0 hidden xs:inline-flex items-center gap-1">
-              👤 Participant
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-white/10 text-zinc-300 border border-white/15 shrink-0 inline-flex items-center gap-1">
+              <span>👤</span>
+              <span>User</span>
             </span>
           )}
+
+          {/* ── 👑 Host Controls Dropdown (Mobile & Desktop) ── */}
+          {(isAdmin || isCreator) ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setHostMenuOpen(prev => !prev);
+                  setTemplateMenuOpen(false);
+                  setExportMenuOpen(false);
+                  setMoreMenuOpen(false);
+                }}
+                title="Room Host Controls & Classroom Ejection"
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-xl text-xs font-extrabold bg-gradient-to-r from-amber-500/25 via-yellow-500/20 to-amber-500/25 text-amber-300 border border-amber-500/50 hover:border-amber-400 hover:from-amber-500/35 hover:to-yellow-500/30 transition-all shadow-[0_0_12px_rgba(245,158,11,0.25)] shrink-0 active:scale-95 cursor-pointer"
+              >
+                <span>👑</span>
+                <span className="hidden sm:inline">Host Controls</span>
+                <span className="sm:hidden font-bold">Host</span>
+                <svg className={`w-3 h-3 ml-0.5 transition-transform duration-200 ${hostMenuOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {hostMenuOpen && (
+                <div className="absolute top-full left-0 mt-2 p-2 rounded-2xl border border-amber-500/40 bg-[#121222] shadow-[0_10px_35px_rgba(0,0,0,0.85)] min-w-[260px] sm:min-w-[280px] z-50 space-y-2 animate-in fade-in zoom-in-95 duration-100 text-left">
+                  <div className="px-2 py-1 border-b border-white/10 flex items-center justify-between">
+                    <div>
+                      <div className="text-[11px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                        <span>👑</span>
+                        <span>Host Command Center</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400">Classroom Control & Ejection</div>
+                    </div>
+                    <span className="text-[9px] font-mono text-amber-400 bg-amber-500/20 px-1.5 py-0.5 rounded font-bold">
+                      Super Admin
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    {/* Lock/Unlock Canvas Editing */}
+                    {onToggleParticipantEditing && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onToggleParticipantEditing(!allowParticipantEditing);
+                        }}
+                        className="w-full px-2.5 py-2 text-xs rounded-xl flex items-center justify-between transition-all bg-white/[0.03] hover:bg-white/[0.08] text-white"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>{allowParticipantEditing ? '🔓' : '🔒'}</span>
+                          <div className="text-left">
+                            <div className="font-semibold">{allowParticipantEditing ? 'Lock Board Editing' : 'Unlock Board Editing'}</div>
+                            <div className="text-[10px] text-zinc-400">
+                              {allowParticipantEditing ? 'Restrict students to View-Only' : 'Allow all students to draw'}
+                            </div>
+                          </div>
+                        </div>
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${allowParticipantEditing ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                          {allowParticipantEditing ? 'Unlocked' : 'Locked'}
+                        </span>
+                      </button>
+                    )}
+
+                    {/* Presentation Mode Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHostMenuOpen(false);
+                        if (presenterUserId === currentUser?.id) {
+                          onStopPresenting?.();
+                        } else {
+                          onStartPresenting?.();
+                        }
+                      }}
+                      className="w-full px-2.5 py-2 text-xs rounded-xl flex items-center justify-between transition-all bg-white/[0.03] hover:bg-white/[0.08] text-white"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span>📡</span>
+                        <div className="text-left">
+                          <div className="font-semibold">{presenterUserId === currentUser?.id ? 'Stop Broadcast' : 'Broadcast Screen to All'}</div>
+                          <div className="text-[10px] text-zinc-400">Lock all students to your view</div>
+                        </div>
+                      </div>
+                      {presenterUserId === currentUser?.id && (
+                        <span className="text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-bold animate-pulse">
+                          LIVE
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Manage & Kick Participants */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHostMenuOpen(false);
+                        setParticipantsModalOpen(true);
+                      }}
+                      className="w-full px-2.5 py-2 text-xs rounded-xl flex items-center justify-between transition-all bg-white/[0.03] hover:bg-white/[0.08] text-white"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span>👥</span>
+                        <div className="text-left">
+                          <div className="font-semibold">Manage & Kick Participants</div>
+                          <div className="text-[10px] text-zinc-400">Eject disruptive users, promote co-hosts</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded font-bold">
+                        {connectedUsers.length} online
+                      </span>
+                    </button>
+
+                    {/* Lower All Hands */}
+                    {onLowerAllHands && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onLowerAllHands();
+                          setHostMenuOpen(false);
+                        }}
+                        className="w-full px-2.5 py-2 text-xs rounded-xl flex items-center justify-between transition-all bg-white/[0.03] hover:bg-white/[0.08] text-white"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>✋</span>
+                          <div className="text-left">
+                            <div className="font-semibold">Lower All Raised Hands</div>
+                            <div className="text-[10px] text-zinc-400">Clear all student question queues</div>
+                          </div>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* Clear Entire Board */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHostMenuOpen(false);
+                        if (confirm('Clear the entire board? All student drawings and notes will be permanently erased.')) {
+                          onClear();
+                        }
+                      }}
+                      className="w-full px-2.5 py-2 text-xs rounded-xl flex items-center justify-between transition-all bg-rose-500/10 hover:bg-rose-500/20 text-rose-300"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span>🗑️</span>
+                        <div className="text-left">
+                          <div className="font-semibold text-rose-300">Authoritative Clear Board</div>
+                          <div className="text-[10px] text-rose-300/70">Wipe canvas for all participants</div>
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Copy Host Link with Token */}
+                    {creatorToken && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = typeof window !== 'undefined' ? `${window.location.origin}/board/${roomCode}?host=${creatorToken}` : '';
+                          if (url) navigator.clipboard.writeText(url);
+                          setCopiedHostLink(true);
+                          setTimeout(() => setCopiedHostLink(false), 2000);
+                        }}
+                        className="w-full px-2.5 py-2 text-xs rounded-xl flex items-center justify-between transition-all bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20"
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span>🔑</span>
+                          <div className="text-left truncate">
+                            <div className="font-bold truncate">{copiedHostLink ? '✓ Copied Host Link!' : 'Copy Host Secret Link'}</div>
+                            <div className="text-[10px] text-amber-200/70 truncate">Open on mobile for instant Host control</div>
+                          </div>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : onClaimHost ? (
+            /* Participant View: Option to Claim Host */
+            <button
+              type="button"
+              onClick={() => setClaimHostModalOpen(true)}
+              title="Are you the Host? Enter Host Key to claim room control"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white border border-white/10 transition-all shrink-0 cursor-pointer"
+            >
+              <span>🔑</span>
+              <span className="hidden sm:inline">Claim Host</span>
+            </button>
+          ) : null}
 
           {/* Presenter Indicator Pill */}
           {presenterUserId && (
@@ -532,6 +735,7 @@ export function BoardHeader({
         currentUser={currentUser}
         isAdmin={isAdmin}
         isCreator={isCreator}
+        creatorToken={creatorToken}
         presenterUserId={presenterUserId}
         isFollowingPresenter={isFollowingPresenter}
         onToggleFollowPresenter={onToggleFollowPresenter || (() => {})}
@@ -541,9 +745,96 @@ export function BoardHeader({
         onRevokeAdmin={onRevokeAdmin || (() => {})}
         onKickUser={onKickUser || (() => {})}
         onLowerHand={onLowerHand}
+        onLowerAllHands={onLowerAllHands}
         allowParticipantEditing={allowParticipantEditing}
         onToggleParticipantEditing={onToggleParticipantEditing}
+        onClaimHost={onClaimHost}
       />
+
+      {/* Claim Host Modal */}
+      {claimHostModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-150"
+          onClick={e => {
+            if (e.target === e.currentTarget) setClaimHostModalOpen(false);
+          }}
+        >
+          <div className="w-full max-w-sm p-5 sm:p-6 rounded-3xl border border-amber-500/40 bg-[#121222] shadow-2xl space-y-4 animate-in zoom-in-95 duration-150 text-left">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shrink-0">
+                👑
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Claim Host Authority</h3>
+                <p className="text-[11px] text-[var(--color-text-muted)]">
+                  Enter the room&apos;s Host Key to unlock Super Admin control
+                </p>
+              </div>
+            </div>
+
+            <form
+              onSubmit={async e => {
+                e.preventDefault();
+                if (!claimKeyInput.trim()) return;
+                setIsClaiming(true);
+                setClaimError(null);
+                try {
+                  const success = await onClaimHost?.(claimKeyInput.trim());
+                  if (success) {
+                    setClaimHostModalOpen(false);
+                    setClaimKeyInput('');
+                  } else {
+                    setClaimError('Invalid Host Key. Please verify and try again.');
+                  }
+                } catch {
+                  setClaimError('Failed to verify Host Key.');
+                } finally {
+                  setIsClaiming(false);
+                }
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="text-[11px] font-semibold text-zinc-300 block mb-1">
+                  Host Secret Key
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. cr_..."
+                  value={claimKeyInput}
+                  onChange={e => setClaimKeyInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-amber-500/30 bg-black/50 text-xs font-mono text-amber-200 placeholder-zinc-500 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              {claimError && (
+                <div className="p-2 rounded-lg bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+                  {claimError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setClaimHostModalOpen(false)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isClaiming || !claimKeyInput.trim()}
+                  className="px-4 py-1.5 rounded-xl text-xs font-bold text-black bg-amber-400 hover:bg-amber-300 transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
+                >
+                  {isClaiming ? 'Verifying...' : 'Claim Control →'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

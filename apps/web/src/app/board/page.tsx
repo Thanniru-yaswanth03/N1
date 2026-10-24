@@ -47,7 +47,8 @@ export default function BoardHubPage() {
         selectedTemplate,
         expiresInHours
       );
-      router.push(`/board/${room.code}`);
+      const dest = room.creatorToken ? `/board/${room.code}?host=${encodeURIComponent(room.creatorToken)}` : `/board/${room.code}`;
+      router.push(dest);
     } catch (err: unknown) {
       setCreateError((err as Error).message || 'Failed to create room');
       setIsCreating(false);

@@ -67,7 +67,13 @@ boardRouter.get(
         return;
       }
 
-      const room = await boardRoomService.getRoom(code);
+      const token =
+        (req.headers['x-creator-token'] as string) ||
+        (req.query.token as string) ||
+        (req.query.creatorToken as string) ||
+        (req.query.host as string);
+
+      const room = await boardRoomService.getRoom(code, token);
       if (!room) {
         res.status(404).json({
           success: false,
@@ -109,6 +115,57 @@ boardRouter.get(
       res.status(200).json({
         success: true,
         data: room,
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    } catch (err) {
+      next(err);
+      return;
+    }
+  }
+);
+
+/**
+ * POST /api/board/rooms/:code/claim-host
+ * Verifies host token or claims host authority for room creator.
+ */
+boardRouter.post(
+  '/rooms/:code/claim-host',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const code = req.params.code?.toUpperCase().trim();
+      const token = (req.body?.token as string)?.trim();
+      if (!code || !token) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'Room code and Host Key are required.',
+          },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const result = await boardRoomService.verifyOrClaimCreator(code, token);
+      if (!result.isCreator) {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: 'INVALID_HOST_KEY',
+            message: 'Invalid Host Key provided.',
+          },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: {
+          isCreator: true,
+          token: result.token,
+        },
         timestamp: new Date().toISOString(),
       });
       return;
