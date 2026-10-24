@@ -82,6 +82,7 @@ export function configureCors(app: Express): void {
         'x-unlock-token',
         'x-drop-password',
         'x-test-rate-limit',
+        'x-client-id',
       ],
       exposedHeaders: ['Content-Disposition', 'Content-Length'],
       credentials: true,

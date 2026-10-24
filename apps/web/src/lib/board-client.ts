@@ -146,11 +146,7 @@ export async function fetchBoardRoom(code: string): Promise<BoardRoomDetail> {
   const clientId = getBoardClientId();
   const apiBase = getBoardApiBase();
 
-  const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}?clientId=${encodeURIComponent(clientId)}`, {
-    headers: {
-      'x-client-id': clientId,
-    },
-  });
+  const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}?clientId=${encodeURIComponent(clientId)}`);
   const json = await res.json();
 
   if (res.status === 403 && json.error?.code === 'USER_KICKED') {
@@ -200,7 +196,6 @@ export async function syncBoardElements(code: string, elements: BoardElement[]):
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        'x-client-id': clientId,
       },
       body: JSON.stringify({ elements }),
     });
@@ -220,9 +215,6 @@ export async function clearBoardElements(code: string): Promise<boolean> {
     const apiBase = getBoardApiBase();
     const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}/clear?clientId=${encodeURIComponent(clientId)}`, {
       method: 'POST',
-      headers: {
-        'x-client-id': clientId,
-      },
     });
     return res.ok;
   } catch {
