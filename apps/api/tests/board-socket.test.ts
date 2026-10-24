@@ -581,4 +581,143 @@ describe('N1 Phase 16: Study Board Real-Time WebSocket Synchronization', () => {
     await new Promise(r => setTimeout(r, 500));
     expect(room2ReceivedLeak).toBe(false);
   });
+
+  it('allows an admin to promote a participant to admin and synchronizes role in real-time', async () => {
+    const room = await boardRoomService.createRoom({ title: 'PromotionTest', template: 'blank' });
+
+    // Creator connects
+    const wsCreator = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsCreator);
+    await new Promise<void>(resolve => wsCreator.on('open', resolve));
+
+    const creatorStatePromise = waitForMessage(wsCreator, 'ROOM_STATE');
+    wsCreator.send(
+      JSON.stringify({
+        type: 'JOIN',
+        roomCode: room.code,
+        userName: 'Teacher_Creator',
+        creatorToken: room.creatorToken,
+        token: room.creatorToken,
+      })
+    );
+    const creatorState = await creatorStatePromise;
+    expect(creatorState.isCreator).toBe(true);
+    expect(creatorState.role).toBe('admin');
+
+    // Participant connects
+    const wsParticipant = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsParticipant);
+    await new Promise<void>(resolve => wsParticipant.on('open', resolve));
+
+    const participantStatePromise = waitForMessage(wsParticipant, 'ROOM_STATE');
+    wsParticipant.send(
+      JSON.stringify({
+        type: 'JOIN',
+        roomCode: room.code,
+        userName: 'Student_Learner',
+      })
+    );
+    const participantState = await participantStatePromise;
+    expect(participantState.isCreator).toBe(false);
+    expect(participantState.role).toBe('participant');
+
+    const participantUserId = participantState.currentUser.id;
+
+    // Creator promotes participant to admin
+    const roleUpdatedOnParticipantPromise = waitForMessage(wsParticipant, 'ROLE_UPDATED');
+    const roleUpdatedOnCreatorPromise = waitForMessage(wsCreator, 'ROLE_UPDATED');
+
+    wsCreator.send(
+      JSON.stringify({
+        type: 'PROMOTE_USER',
+        targetUserId: participantUserId,
+      })
+    );
+
+    const roleMsgParticipant = await roleUpdatedOnParticipantPromise;
+    const roleMsgCreator = await roleUpdatedOnCreatorPromise;
+
+    expect(roleMsgParticipant.userId).toBe(participantUserId);
+    expect(roleMsgParticipant.role).toBe('admin');
+    expect(roleMsgCreator.userId).toBe(participantUserId);
+    expect(roleMsgCreator.role).toBe('admin');
+
+    // Now newly promoted participant can send element updates and they sync to creator
+    const syncPromise = waitForMessage(wsCreator, 'ELEMENTS_SYNC');
+    wsParticipant.send(
+      JSON.stringify({
+        type: 'ELEMENTS_UPDATE',
+        elements: [
+          {
+            id: 'elem_by_promoted_student',
+            type: 'sticky',
+            x: 200,
+            y: 200,
+            text: 'I am now an admin and can collaborate!',
+            color: '#38bdf8',
+          },
+        ],
+      })
+    );
+
+    const syncMsg = await syncPromise;
+    expect(syncMsg.elements.some((el: any) => el.id === 'elem_by_promoted_student')).toBe(true);
+
+    // Creator revokes admin status
+    const revokeParticipantPromise = waitForMessage(wsParticipant, 'ROLE_UPDATED');
+    wsCreator.send(
+      JSON.stringify({
+        type: 'REVOKE_ADMIN',
+        targetUserId: participantUserId,
+      })
+    );
+
+    const revokedMsg = await revokeParticipantPromise;
+    expect(revokedMsg.userId).toBe(participantUserId);
+    expect(revokedMsg.role).toBe('participant');
+  });
+
+  it('handles presentation mode start and stop cleanly', async () => {
+    const room = await boardRoomService.createRoom({ title: 'PresentationTest', template: 'blank' });
+
+    const wsPresenter = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsPresenter);
+    await new Promise<void>(resolve => wsPresenter.on('open', resolve));
+
+    const presenterStatePromise = waitForMessage(wsPresenter, 'ROOM_STATE');
+    wsPresenter.send(
+      JSON.stringify({
+        type: 'JOIN',
+        roomCode: room.code,
+        userName: 'Lead_Presenter',
+        creatorToken: room.creatorToken,
+        token: room.creatorToken,
+      })
+    );
+    const presenterState = await presenterStatePromise;
+    const presenterUserId = presenterState.currentUser.id;
+
+    const wsAudience = new WebSocket(`ws://localhost:${port}/ws/board`);
+    activeSockets.push(wsAudience);
+    await new Promise<void>(resolve => wsAudience.on('open', resolve));
+
+    await new Promise<void>(resolve => {
+      wsAudience.send(JSON.stringify({ type: 'JOIN', roomCode: room.code, userName: 'Audience_Member' }));
+      wsAudience.once('message', () => resolve());
+    });
+
+    // Start presenting
+    const presStartPromise = waitForMessage(wsAudience, 'PRESENTATION_STATE');
+    wsPresenter.send(JSON.stringify({ type: 'START_PRESENTING' }));
+
+    const startMsg = await presStartPromise;
+    expect(startMsg.presenterUserId).toBe(presenterUserId);
+
+    // Stop presenting
+    const presStopPromise = waitForMessage(wsAudience, 'PRESENTATION_STATE');
+    wsPresenter.send(JSON.stringify({ type: 'STOP_PRESENTING' }));
+
+    const stopMsg = await presStopPromise;
+    expect(stopMsg.presenterUserId).toBeNull();
+  });
 });

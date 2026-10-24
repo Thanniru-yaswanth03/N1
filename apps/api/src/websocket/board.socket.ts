@@ -44,6 +44,7 @@ interface ClientSession {
   userColor: string;
   roomCode: string | null;
   isCreator: boolean;
+  role: 'admin' | 'participant';
   creatorToken: string | null;
   isAlive: boolean;
   messageCount: number;
@@ -58,6 +59,8 @@ export class BoardWebSocketManager {
   private wss: WebSocketServer | null = null;
   private roomClients = new Map<string, Set<ClientSession>>();
   private roomPermissions = new Map<string, boolean>();
+  private roomAdmins = new Map<string, Set<string>>();
+  private roomPresenters = new Map<string, string | null>();
   private saveDebounceTimers = new Map<string, NodeJS.Timeout>();
   private pendingElements = new Map<string, BoardElement[]>();
 
@@ -113,6 +116,7 @@ export class BoardWebSocketManager {
         ANONYMOUS_COLORS[Math.floor(Math.random() * ANONYMOUS_COLORS.length)]!,
       roomCode: null,
       isCreator: false,
+      role: 'participant',
       creatorToken: queryToken,
       isAlive: true,
       messageCount: 0,
@@ -217,6 +221,19 @@ export class BoardWebSocketManager {
     session.isCreator = isCreator;
     session.creatorToken = token;
 
+    if (!this.roomAdmins.has(roomCode)) {
+      this.roomAdmins.set(roomCode, new Set());
+    }
+    const adminSet = this.roomAdmins.get(roomCode)!;
+    if (isCreator) {
+      adminSet.add(session.userId);
+      session.role = 'admin';
+    } else if (adminSet.has(session.userId)) {
+      session.role = 'admin';
+    } else {
+      session.role = 'participant';
+    }
+
     if (!this.roomPermissions.has(roomCode)) {
       this.roomPermissions.set(roomCode, roomDetail.allowParticipantEditing ?? true);
     }
@@ -229,18 +246,24 @@ export class BoardWebSocketManager {
     const clients = this.roomClients.get(roomCode)!;
     clients.add(session);
 
+    const currentPresenter = this.roomPresenters.get(roomCode) || null;
+
     const currentUser: ConnectedBoardUser = {
       id: session.userId,
       name: session.userName,
       color: session.userColor,
-      role: session.isCreator ? 'creator' : 'participant',
+      role: session.role,
+      isOwner: session.isCreator,
+      isPresenter: currentPresenter === session.userId,
     };
 
     const activeUsers: ConnectedBoardUser[] = Array.from(clients).map(c => ({
       id: c.userId,
       name: c.userName,
       color: c.userColor,
-      role: c.isCreator ? 'creator' : 'participant',
+      role: c.role,
+      isOwner: c.isCreator,
+      isPresenter: currentPresenter === c.userId,
     }));
 
     // Send full room state to the newly joined client
@@ -261,7 +284,9 @@ export class BoardWebSocketManager {
       users: activeUsers,
       currentUser,
       isCreator: session.isCreator,
+      role: session.role,
       allowParticipantEditing: this.roomPermissions.get(roomCode) ?? true,
+      presenterUserId: currentPresenter,
     });
 
     // Notify other peers in this room
@@ -280,10 +305,20 @@ export class BoardWebSocketManager {
     const roomCode = session.roomCode;
     const clients = this.roomClients.get(roomCode);
     if (clients) {
+      if (this.roomPresenters.get(roomCode) === session.userId) {
+        this.roomPresenters.set(roomCode, null);
+        this.broadcastToRoom(roomCode, {
+          type: 'PRESENTATION_STATE',
+          presenterUserId: null,
+        });
+      }
+
       clients.delete(session);
       if (clients.size === 0) {
         this.roomClients.delete(roomCode);
         this.roomPermissions.delete(roomCode);
+        this.roomAdmins.delete(roomCode);
+        this.roomPresenters.delete(roomCode);
         // Flush any pending elements to database
         this.flushPendingElements(roomCode);
       } else {
@@ -308,10 +343,11 @@ export class BoardWebSocketManager {
 
     switch (msg.type) {
       case 'JOIN': {
+        const token = msg.creatorToken || (msg as any).token;
         if (msg.userName) session.userName = msg.userName;
         if (msg.userColor) session.userColor = msg.userColor;
-        if (msg.creatorToken) session.creatorToken = msg.creatorToken;
-        await this.joinRoom(session, msg.roomCode.toUpperCase().trim(), msg.creatorToken);
+        if (token) session.creatorToken = token;
+        await this.joinRoom(session, msg.roomCode.toUpperCase().trim(), token);
         break;
       }
 
@@ -332,13 +368,155 @@ export class BoardWebSocketManager {
         break;
       }
 
+      case 'PROMOTE_USER': {
+        if (!roomCode) return;
+        const isAdmin = session.role === 'admin' || session.isCreator;
+        if (!isAdmin) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Only a Room Admin can promote participants.',
+          });
+          return;
+        }
+
+        const clients = this.roomClients.get(roomCode);
+        const target = Array.from(clients || []).find(c => c.userId === msg.targetUserId);
+        if (!target) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Participant not found in room.',
+          });
+          return;
+        }
+
+        target.role = 'admin';
+        if (!this.roomAdmins.has(roomCode)) {
+          this.roomAdmins.set(roomCode, new Set());
+        }
+        this.roomAdmins.get(roomCode)!.add(target.userId);
+
+        // Notify entire room immediately
+        this.broadcastToRoom(roomCode, {
+          type: 'ROLE_UPDATED',
+          userId: target.userId,
+          role: 'admin',
+          userName: target.userName,
+        });
+
+        this.broadcastToRoom(roomCode, {
+          type: 'ACTIVITY_INDICATOR',
+          userId: session.userId,
+          userName: session.userName,
+          action: `promoted ${target.userName} to Room Admin`,
+          timestamp: Date.now(),
+        });
+        break;
+      }
+
+      case 'REVOKE_ADMIN': {
+        if (!roomCode) return;
+        const isAdmin = session.role === 'admin' || session.isCreator;
+        if (!isAdmin) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Only a Room Admin can revoke admin privileges.',
+          });
+          return;
+        }
+
+        const clients = this.roomClients.get(roomCode);
+        const target = Array.from(clients || []).find(c => c.userId === msg.targetUserId);
+        if (!target) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Participant not found in room.',
+          });
+          return;
+        }
+
+        if (target.isCreator) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'The room creator cannot have their admin access revoked.',
+          });
+          return;
+        }
+
+        target.role = 'participant';
+        this.roomAdmins.get(roomCode)?.delete(target.userId);
+
+        // Notify entire room immediately
+        this.broadcastToRoom(roomCode, {
+          type: 'ROLE_UPDATED',
+          userId: target.userId,
+          role: 'participant',
+          userName: target.userName,
+        });
+
+        this.broadcastToRoom(roomCode, {
+          type: 'ACTIVITY_INDICATOR',
+          userId: session.userId,
+          userName: session.userName,
+          action: `revoked admin access for ${target.userName}`,
+          timestamp: Date.now(),
+        });
+        break;
+      }
+
+      case 'START_PRESENTING': {
+        if (!roomCode) return;
+        const isAdmin = session.role === 'admin' || session.isCreator;
+        if (!isAdmin) {
+          this.send(session.ws, {
+            type: 'ERROR',
+            message: 'Only a Room Admin can start presenting.',
+          });
+          return;
+        }
+
+        this.roomPresenters.set(roomCode, session.userId);
+        this.broadcastToRoom(roomCode, {
+          type: 'PRESENTATION_STATE',
+          presenterUserId: session.userId,
+          presenterName: session.userName,
+        });
+        this.broadcastToRoom(roomCode, {
+          type: 'ACTIVITY_INDICATOR',
+          userId: session.userId,
+          userName: session.userName,
+          action: 'started presenting the board',
+          timestamp: Date.now(),
+        });
+        break;
+      }
+
+      case 'STOP_PRESENTING': {
+        if (!roomCode) return;
+        this.roomPresenters.set(roomCode, null);
+        this.broadcastToRoom(roomCode, {
+          type: 'PRESENTATION_STATE',
+          presenterUserId: null,
+        });
+        this.broadcastToRoom(roomCode, {
+          type: 'ACTIVITY_INDICATOR',
+          userId: session.userId,
+          userName: session.userName,
+          action: 'ended presentation mode',
+          timestamp: Date.now(),
+        });
+        break;
+      }
+
       case 'LIVE_DRAW': {
         if (!roomCode) return;
-        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        const canEdit =
+          session.role === 'admin' ||
+          session.isCreator ||
+          (this.roomPermissions.get(roomCode) ?? true);
         if (!canEdit) {
           this.send(session.ws, {
             type: 'ERROR',
-            message: 'Drawing is currently locked by the room teacher.',
+            message: 'Drawing is currently locked by a Room Admin.',
           });
           return;
         }
@@ -364,7 +542,7 @@ export class BoardWebSocketManager {
 
       case 'VIEWPORT_SYNC': {
         if (!roomCode) return;
-        // Viewport sync from Teacher to participants
+        // Viewport sync from Admin/Presenter to participants
         this.broadcastToRoom(
           roomCode,
           {
@@ -398,10 +576,11 @@ export class BoardWebSocketManager {
 
       case 'TOGGLE_PERMISSIONS': {
         if (!roomCode) return;
-        if (!session.isCreator) {
+        const isAdmin = session.role === 'admin' || session.isCreator;
+        if (!isAdmin) {
           this.send(session.ws, {
             type: 'ERROR',
-            message: 'Only the room teacher can change editing permissions.',
+            message: 'Only a Room Admin can change editing permissions.',
           });
           return;
         }
@@ -418,11 +597,14 @@ export class BoardWebSocketManager {
 
       case 'ELEMENTS_UPDATE': {
         if (!roomCode) return;
-        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        const canEdit =
+          session.role === 'admin' ||
+          session.isCreator ||
+          (this.roomPermissions.get(roomCode) ?? true);
         if (!canEdit) {
           this.send(session.ws, {
             type: 'ERROR',
-            message: 'Editing is locked by the teacher.',
+            message: 'Editing is locked by a Room Admin.',
           });
           return;
         }
@@ -443,11 +625,14 @@ export class BoardWebSocketManager {
 
       case 'ELEMENT_CHANGE': {
         if (!roomCode) return;
-        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        const canEdit =
+          session.role === 'admin' ||
+          session.isCreator ||
+          (this.roomPermissions.get(roomCode) ?? true);
         if (!canEdit) {
           this.send(session.ws, {
             type: 'ERROR',
-            message: 'Editing is locked by the teacher.',
+            message: 'Editing is locked by a Room Admin.',
           });
           return;
         }
@@ -466,11 +651,14 @@ export class BoardWebSocketManager {
 
       case 'CLEAR_BOARD': {
         if (!roomCode) return;
-        const canEdit = session.isCreator || (this.roomPermissions.get(roomCode) ?? true);
+        const canEdit =
+          session.role === 'admin' ||
+          session.isCreator ||
+          (this.roomPermissions.get(roomCode) ?? true);
         if (!canEdit) {
           this.send(session.ws, {
             type: 'ERROR',
-            message: 'Only authorized users can clear the board.',
+            message: 'Only authorized Room Admins can clear the board.',
           });
           return;
         }

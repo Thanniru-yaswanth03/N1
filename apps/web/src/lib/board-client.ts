@@ -181,7 +181,9 @@ export interface BoardSocketCallbacks {
     users: ConnectedBoardUser[],
     currentUser: ConnectedBoardUser,
     isCreator: boolean,
-    allowParticipantEditing: boolean
+    allowParticipantEditing: boolean,
+    role?: 'admin' | 'participant',
+    presenterUserId?: string | null
   ) => void;
   onUserJoined: (user: ConnectedBoardUser) => void;
   onUserLeft: (userId: string) => void;
@@ -217,6 +219,15 @@ export interface BoardSocketCallbacks {
     timestamp: number;
   }) => void;
   onPermissionsUpdated?: (allowParticipantEditing: boolean) => void;
+  onRoleUpdated?: (update: {
+    userId: string;
+    role: 'admin' | 'participant';
+    userName?: string;
+  }) => void;
+  onPresentationState?: (state: {
+    presenterUserId: string | null;
+    presenterName?: string;
+  }) => void;
 }
 
 export function connectBoardSocket(
@@ -240,6 +251,10 @@ export function connectBoardSocket(
   sendViewportSync: (panX: number, panY: number, zoom: number) => void;
   sendActivityBroadcast: (action: string, details?: string) => void;
   sendTogglePermissions: (allowParticipantEditing: boolean) => void;
+  sendPromoteUser: (targetUserId: string) => void;
+  sendRevokeAdmin: (targetUserId: string) => void;
+  sendStartPresenting: () => void;
+  sendStopPresenting: () => void;
   disconnect: () => void;
 } {
   let ws: WebSocket | null = null;
@@ -291,7 +306,9 @@ export function connectBoardSocket(
                 msg.users,
                 msg.currentUser,
                 msg.isCreator,
-                msg.allowParticipantEditing
+                msg.allowParticipantEditing,
+                msg.role,
+                msg.presenterUserId
               );
               break;
             case 'USER_JOINED':
@@ -329,6 +346,12 @@ export function connectBoardSocket(
               break;
             case 'PERMISSIONS_UPDATED':
               callbacks.onPermissionsUpdated?.(msg.allowParticipantEditing);
+              break;
+            case 'ROLE_UPDATED':
+              callbacks.onRoleUpdated?.(msg);
+              break;
+            case 'PRESENTATION_STATE':
+              callbacks.onPresentationState?.(msg);
               break;
           }
         } catch {
@@ -414,6 +437,18 @@ export function connectBoardSocket(
     },
     sendTogglePermissions: (allowParticipantEditing: boolean) => {
       send({ type: 'TOGGLE_PERMISSIONS', allowParticipantEditing });
+    },
+    sendPromoteUser: (targetUserId: string) => {
+      send({ type: 'PROMOTE_USER', targetUserId });
+    },
+    sendRevokeAdmin: (targetUserId: string) => {
+      send({ type: 'REVOKE_ADMIN', targetUserId });
+    },
+    sendStartPresenting: () => {
+      send({ type: 'START_PRESENTING' });
+    },
+    sendStopPresenting: () => {
+      send({ type: 'STOP_PRESENTING' });
     },
     disconnect: () => {
       isClosedManually = true;

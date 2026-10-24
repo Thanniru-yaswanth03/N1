@@ -94,14 +94,14 @@ export function BoardToolbar({
       {/* ── Main Centered Floating Tool Dock ── */}
       <aside
         aria-label="Drawing tools"
-        className="fixed bottom-3 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[96vw] sm:max-w-none select-none"
+        className="fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[96vw] sm:max-w-none select-none"
       >
         {!canEdit && (
           <div className="mb-2 px-3 py-1 mx-auto w-fit rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-semibold flex items-center gap-1.5 shadow-lg backdrop-blur-md animate-fadeIn">
             <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
-            <span>View Only — Teacher has locked participant editing</span>
+            <span>View Only — Editing is locked to Room Admins</span>
           </div>
         )}
 
@@ -492,7 +492,7 @@ export function BoardToolbar({
       {/* ── Corner Zoom & Fit Control Dock (Bottom Right, Non-Intrusive) ── */}
       <div
         aria-label="Canvas Zoom and Fit Controls"
-        className="fixed bottom-16 right-3 sm:bottom-6 sm:right-6 z-40 flex items-center gap-1 p-1 rounded-2xl border border-cyan-500/20 bg-[#10101c]/95 backdrop-blur-xl shadow-2xl text-[11px] font-mono text-[var(--color-text-muted)] select-none"
+        className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] right-2 sm:bottom-6 sm:right-6 z-30 flex items-center gap-1 p-1 rounded-2xl border border-cyan-500/20 bg-[#10101c]/95 backdrop-blur-xl shadow-2xl text-[11px] font-mono text-[var(--color-text-muted)] select-none"
       >
         <button
           type="button"

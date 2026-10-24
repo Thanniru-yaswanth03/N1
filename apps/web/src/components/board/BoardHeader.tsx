@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { BoardTemplate, ConnectedBoardUser, BOARD_TEMPLATES } from '@n1/shared';
 import { BoardConnectionStatus } from '../../lib/board-client';
 import { Button } from '../ui/Button';
+import { ParticipantsModal } from './ParticipantsModal';
 
 export interface BoardHeaderProps {
   roomCode: string;
@@ -16,12 +17,16 @@ export interface BoardHeaderProps {
   connectionStatus?: BoardConnectionStatus;
   connectedUsers: ConnectedBoardUser[];
   currentUser: ConnectedBoardUser | null;
+  isAdmin?: boolean;
   isCreator?: boolean;
+  presenterUserId?: string | null;
+  isFollowingPresenter?: boolean;
+  onToggleFollowPresenter?: () => void;
+  onStartPresenting?: () => void;
+  onStopPresenting?: () => void;
+  onPromoteUser?: (userId: string) => void;
+  onRevokeAdmin?: (userId: string) => void;
   allowParticipantEditing?: boolean;
-  isBroadcastingViewport?: boolean;
-  onToggleBroadcastViewport?: () => void;
-  isFollowingTeacher?: boolean;
-  onToggleFollowTeacher?: () => void;
   onToggleParticipantEditing?: (allowed: boolean) => void;
   recentActivity?: { action: string; details?: string; userName: string; timestamp: number } | null;
   onShare: () => void;
@@ -42,12 +47,16 @@ export function BoardHeader({
   connectionStatus = isConnected ? 'CONNECTED' : 'DISCONNECTED',
   connectedUsers,
   currentUser,
+  isAdmin = false,
   isCreator = false,
+  presenterUserId = null,
+  isFollowingPresenter = true,
+  onToggleFollowPresenter,
+  onStartPresenting,
+  onStopPresenting,
+  onPromoteUser,
+  onRevokeAdmin,
   allowParticipantEditing = true,
-  isBroadcastingViewport = false,
-  onToggleBroadcastViewport,
-  isFollowingTeacher = true,
-  onToggleFollowTeacher,
   onToggleParticipantEditing,
   recentActivity,
   onShare,
@@ -58,6 +67,7 @@ export function BoardHeader({
   onSelectTemplate,
 }: BoardHeaderProps) {
   const [copiedCode, setCopiedCode] = useState(false);
+  const [participantsModalOpen, setParticipantsModalOpen] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -116,150 +126,119 @@ export function BoardHeader({
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 h-14 px-2.5 sm:px-4 border-b border-[var(--color-border-subtle)] bg-[#09090f]/90 backdrop-blur-xl flex items-center justify-between gap-2 select-none">
-      {/* ── Left: Back Link, Room Title, Code Badge, Connection Pill, Roles & Controls ── */}
-      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-        <Link
-          href="/board"
-          aria-label="Back to Study Board Hub"
-          className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-cyan-400 transition-colors shrink-0 p-1 rounded-lg hover:bg-white/5"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-          <span className="hidden md:inline font-medium">Hub</span>
-        </Link>
-
-        {/* Room Title */}
-        <span
-          className="text-xs sm:text-sm font-bold text-white max-w-[80px] xs:max-w-[110px] sm:max-w-[160px] truncate"
-          title={roomTitle}
-        >
-          {roomTitle}
-        </span>
-
-        {/* Room Code Badge with Copy */}
-        <button
-          type="button"
-          onClick={copyCode}
-          title="Click to copy Room Code"
-          aria-label={`Room Code ${roomCode}. Click to copy.`}
-          className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md font-mono text-[11px] sm:text-xs font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition-all shrink-0 focus-ring"
-        >
-          <span>{roomCode}</span>
-          <svg className="w-3 h-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-          {copiedCode && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
-        </button>
-
-        {/* Role Badge */}
-        {isCreator ? (
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0">
-            👑 Teacher
-          </span>
-        ) : (
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0">
-            🎓 Student
-          </span>
-        )}
-
-        {/* Connection Status Indicator */}
-        <div
-          role="status"
-          aria-label={`Connection status: ${connectionStatus}`}
-          className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold tracking-wider uppercase border border-[var(--color-border-subtle)] bg-[var(--color-surface)] shrink-0"
-        >
-          <span
-            className={`w-2 h-2 rounded-full shrink-0 ${
-              connectionStatus === 'CONNECTED'
-                ? 'bg-emerald-400 animate-pulse'
-                : connectionStatus === 'CONNECTING'
-                ? 'bg-amber-400 animate-pulse'
-                : connectionStatus === 'RECONNECTING'
-                ? 'bg-rose-400 animate-pulse'
-                : 'bg-zinc-500'
-            }`}
-          />
-          <span className={`hidden sm:inline ${getStatusColor().split(' ')[0]}`}>
-            {connectionStatus}
-          </span>
-          {/* Peer count badge on mobile */}
-          <span className="sm:hidden text-zinc-300 font-mono text-[10px]">
-            👥{connectedUsers.length}
-          </span>
-        </div>
-
-        {/* Classroom Controls: Teacher Presentation / Broadcast Viewport */}
-        {isCreator && onToggleBroadcastViewport && (
-          <button
-            type="button"
-            onClick={onToggleBroadcastViewport}
-            title={
-              isBroadcastingViewport
-                ? 'Broadcast active: Students are following your viewport'
-                : 'Click to broadcast your viewport to all connected students'
-            }
-            className={`hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
-              isBroadcastingViewport
-                ? 'bg-cyan-500 text-black font-bold shadow-md shadow-cyan-500/30 ring-1 ring-cyan-300'
-                : 'bg-white/5 hover:bg-white/10 text-cyan-300 border border-cyan-500/30'
-            }`}
+    <>
+      <header className="fixed top-0 left-0 right-0 z-40 h-14 px-2 sm:px-4 border-b border-[var(--color-border-subtle)] bg-[#09090f]/90 backdrop-blur-xl flex items-center justify-between gap-1.5 sm:gap-2 select-none">
+        {/* ── Left: Back Link, Room Title, Code Badge, Role Pill, Connection ── */}
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+          <Link
+            href="/board"
+            aria-label="Back to Study Board Hub"
+            className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-cyan-400 transition-colors shrink-0 p-1 rounded-lg hover:bg-white/5"
           >
-            <span className={`w-2 h-2 rounded-full ${isBroadcastingViewport ? 'bg-black animate-ping' : 'bg-cyan-400'}`} />
-            <span>{isBroadcastingViewport ? '📡 Live View' : '📡 Broadcast'}</span>
-          </button>
-        )}
-
-        {/* Classroom Controls: Teacher Toggle Student Editing */}
-        {isCreator && onToggleParticipantEditing && (
-          <button
-            type="button"
-            onClick={() => onToggleParticipantEditing(!allowParticipantEditing)}
-            title={allowParticipantEditing ? 'Lock student editing (View Only mode)' : 'Unlock student editing'}
-            className={`hidden lg:flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
-              allowParticipantEditing
-                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25'
-                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
-            }`}
-          >
-            <span>{allowParticipantEditing ? '✏️ Student Edits: ON' : '🔒 Student Edits: LOCKED'}</span>
-          </button>
-        )}
-
-        {/* Classroom Controls: Student Follow Teacher View */}
-        {!isCreator && onToggleFollowTeacher && (
-          <button
-            type="button"
-            onClick={onToggleFollowTeacher}
-            title={isFollowingTeacher ? 'Following teacher (Click to explore freely)' : 'Click to snap back to Teacher view'}
-            className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
-              isFollowingTeacher
-                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                : 'bg-white/5 hover:bg-white/10 text-zinc-300 border border-white/10'
-            }`}
-          >
-            <span>{isFollowingTeacher ? '👁️ Follow Teacher' : '🎯 Snap to Teacher'}</span>
-          </button>
-        )}
-
-        {/* View Only indicator for students when editing locked */}
-        {!isCreator && !allowParticipantEditing && (
-          <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">
-            🔒 View Only
-          </span>
-        )}
-
-        {/* Live Expiration Countdown (Desktop) */}
-        {timeRemaining && (
-          <div className="hidden 2xl:flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono text-[var(--color-text-muted)] border border-[var(--color-border-subtle)] bg-[var(--color-surface)]">
-            <svg className="w-3 h-3 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            <span>{timeRemaining}</span>
+            <span className="hidden md:inline font-medium">Hub</span>
+          </Link>
+
+          {/* Room Title */}
+          <span
+            className="text-xs sm:text-sm font-bold text-white max-w-[70px] xs:max-w-[100px] sm:max-w-[150px] truncate"
+            title={roomTitle}
+          >
+            {roomTitle}
+          </span>
+
+          {/* Room Code Badge with Copy */}
+          <button
+            type="button"
+            onClick={copyCode}
+            title="Click to copy Room Code"
+            aria-label={`Room Code ${roomCode}. Click to copy.`}
+            className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md font-mono text-[11px] sm:text-xs font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition-all shrink-0 focus-ring"
+          >
+            <span>{roomCode}</span>
+            <svg className="w-3 h-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            {copiedCode && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
+          </button>
+
+          {/* Expiration Timer Pill */}
+          {timeRemaining && (
+            <span
+              className="hidden lg:inline-flex items-center gap-1 text-[10px] font-mono text-[var(--color-text-muted)] bg-white/5 px-2 py-0.5 rounded border border-white/10 shrink-0"
+              title="Time until room expires"
+            >
+              ⏳ {timeRemaining}
+            </span>
+          )}
+
+          {/* Role Badge (Admin or Participant) */}
+          {isCreator ? (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0 hidden xs:inline-flex items-center gap-1">
+              👑 Creator
+            </span>
+          ) : isAdmin ? (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0 hidden xs:inline-flex items-center gap-1">
+              🛡️ Admin
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase bg-white/10 text-zinc-300 border border-white/15 shrink-0 hidden xs:inline-flex items-center gap-1">
+              👤 Participant
+            </span>
+          )}
+
+          {/* Presenter Indicator Pill */}
+          {presenterUserId && (
+            <div className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0 animate-pulse">
+              <span>📡 Live</span>
+            </div>
+          )}
+
+          {/* Participants Button (Primary action on all viewports) */}
+          <button
+            type="button"
+            onClick={() => setParticipantsModalOpen(true)}
+            title="View Classroom Participants & Permissions"
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-xl text-xs font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition-all shrink-0"
+          >
+            <span>👥</span>
+            <span className="hidden sm:inline">Users</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-cyan-400 text-black font-bold">
+              {connectedUsers.length}
+            </span>
+          </button>
+
+          {/* Connection Status Indicator */}
+          <div
+            role="status"
+            aria-label={`Connection status: ${connectionStatus}`}
+            className="hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold tracking-wider uppercase border border-[var(--color-border-subtle)] bg-[var(--color-surface)] shrink-0"
+          >
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                connectionStatus === 'CONNECTED'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : connectionStatus === 'CONNECTING'
+                  ? 'bg-amber-400 animate-pulse'
+                  : connectionStatus === 'RECONNECTING'
+                  ? 'bg-rose-400 animate-pulse'
+                  : 'bg-zinc-500'
+              }`}
+            />
+            <span className={`hidden md:inline ${getStatusColor().split(' ')[0]}`}>
+              {connectionStatus}
+            </span>
           </div>
-        )}
-      </div>
+
+          {/* View Only indicator for participants when editing locked */}
+          {!isAdmin && !allowParticipantEditing && (
+            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">
+              🔒 View Only
+            </span>
+          )}
+        </div>
 
       {/* ── Right: Peers, Desktop Actions, Mobile More Menu, Share Button ── */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -278,18 +257,24 @@ export function BoardHeader({
           {connectedUsers.slice(0, 5).map(u => (
             <div
               key={u.id}
-              title={`${u.name} (${u.role === 'creator' ? '👑 Teacher' : 'Student'})${
+              title={`${u.name} (${u.isOwner ? '👑 Creator' : u.role === 'admin' ? '🛡️ Admin' : 'Participant'})${
                 u.id === currentUser?.id ? ' - You' : ''
               }`}
               style={{ backgroundColor: u.color }}
               className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-black uppercase shadow-sm relative ${
-                u.role === 'creator' ? 'border-amber-400 ring-1 ring-amber-400/50' : 'border-[#09090f]'
+                u.isOwner
+                  ? 'border-purple-400 ring-1 ring-purple-400/50'
+                  : u.role === 'admin'
+                  ? 'border-cyan-400 ring-1 ring-cyan-400/50'
+                  : 'border-[#09090f]'
               }`}
             >
               {u.name.charAt(0)}
-              {u.role === 'creator' && (
+              {u.isOwner ? (
                 <span className="absolute -top-1.5 -right-1 text-[8px] leading-none">👑</span>
-              )}
+              ) : u.role === 'admin' ? (
+                <span className="absolute -top-1.5 -right-1 text-[8px] leading-none">🛡️</span>
+              ) : null}
             </div>
           ))}
           {connectedUsers.length > 5 && (
@@ -486,5 +471,28 @@ export function BoardHeader({
         </Button>
       </div>
     </header>
+
+      {/* Participants & Permissions Modal */}
+      <ParticipantsModal
+        isOpen={participantsModalOpen}
+        onClose={() => setParticipantsModalOpen(false)}
+        roomCode={roomCode}
+        roomTitle={roomTitle}
+        connectionStatus={connectionStatus}
+        connectedUsers={connectedUsers}
+        currentUser={currentUser}
+        isAdmin={isAdmin}
+        isCreator={isCreator}
+        presenterUserId={presenterUserId}
+        isFollowingPresenter={isFollowingPresenter}
+        onToggleFollowPresenter={onToggleFollowPresenter || (() => {})}
+        onStartPresenting={onStartPresenting || (() => {})}
+        onStopPresenting={onStopPresenting || (() => {})}
+        onPromoteUser={onPromoteUser || (() => {})}
+        onRevokeAdmin={onRevokeAdmin || (() => {})}
+        allowParticipantEditing={allowParticipantEditing}
+        onToggleParticipantEditing={onToggleParticipantEditing}
+      />
+    </>
   );
 }

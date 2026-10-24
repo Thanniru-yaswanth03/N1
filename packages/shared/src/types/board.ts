@@ -92,7 +92,9 @@ export interface ConnectedBoardUser {
   id: string;
   name: string;
   color: string;
-  role?: 'creator' | 'participant';
+  role: 'admin' | 'participant';
+  isOwner?: boolean;
+  isPresenter?: boolean;
   cursor?: { x: number; y: number };
 }
 
@@ -113,7 +115,11 @@ export type BoardSocketClientMessage =
     }
   | { type: 'VIEWPORT_SYNC'; panX: number; panY: number; zoom: number }
   | { type: 'ACTIVITY_BROADCAST'; action: string; details?: string }
-  | { type: 'TOGGLE_PERMISSIONS'; allowParticipantEditing: boolean };
+  | { type: 'TOGGLE_PERMISSIONS'; allowParticipantEditing: boolean }
+  | { type: 'PROMOTE_USER'; targetUserId: string }
+  | { type: 'REVOKE_ADMIN'; targetUserId: string }
+  | { type: 'START_PRESENTING' }
+  | { type: 'STOP_PRESENTING' };
 
 export type BoardSocketServerMessage =
   | {
@@ -123,7 +129,9 @@ export type BoardSocketServerMessage =
       users: ConnectedBoardUser[];
       currentUser: ConnectedBoardUser;
       isCreator: boolean;
+      role: 'admin' | 'participant';
       allowParticipantEditing: boolean;
+      presenterUserId?: string | null;
     }
   | { type: 'USER_JOINED'; user: ConnectedBoardUser }
   | { type: 'USER_LEFT'; userId: string }
@@ -173,4 +181,15 @@ export type BoardSocketServerMessage =
   | {
       type: 'PERMISSIONS_UPDATED';
       allowParticipantEditing: boolean;
+    }
+  | {
+      type: 'ROLE_UPDATED';
+      userId: string;
+      role: 'admin' | 'participant';
+      userName?: string;
+    }
+  | {
+      type: 'PRESENTATION_STATE';
+      presenterUserId: string | null;
+      presenterName?: string;
     };

@@ -34,61 +34,40 @@ export const updateBoardElementsSchema = z.object({
   elements: z.array(z.any()),
 });
 
-export const boardElementTypeSchema = z.enum([
-  'stroke',
-  'shape',
-  'text',
-  'sticky',
-  'line',
-  'arrow',
-  'rectangle',
-  'circle',
-]);
+export const boardElementTypeSchema = z.string().max(50);
 
-export const boardShapeTypeSchema = z.enum([
-  'rectangle',
-  'rounded-rectangle',
-  'circle',
-  'ellipse',
-  'diamond',
-  'cylinder',
-  'star',
-  'triangle',
-]);
+export const boardShapeTypeSchema = z.string().max(50);
 
-export const boardLineTypeSchema = z.enum([
-  'straight',
-  'arrow',
-  'double-arrow',
-  'elbow',
-]);
+export const boardLineTypeSchema = z.string().max(50);
 
-export const boardElementSchema = z.object({
-  id: z.string().min(1).max(100),
-  type: boardElementTypeSchema,
-  x: z.number().finite(),
-  y: z.number().finite(),
-  width: z.number().finite().optional(),
-  height: z.number().finite().optional(),
-  rotation: z.number().finite().optional(),
-  color: z.string().max(50),
-  fillColor: z.string().max(50).optional(),
-  fill: z.string().max(50).optional(),
-  strokeWidth: z.number().finite().min(0).max(100).optional(),
-  strokeType: z.enum(['solid', 'dashed']).optional(),
-  content: z.string().max(5000).optional(),
-  text: z.string().max(5000).optional(),
-  fontSize: z.number().finite().optional(),
-  fontFamily: z.enum(['sans', 'mono', 'handwritten']).optional(),
-  points: z.array(z.object({ x: z.number().finite(), y: z.number().finite() })).optional(),
-  shapeType: boardShapeTypeSchema.optional(),
-  lineType: boardLineTypeSchema.optional(),
-  zIndex: z.number().finite().optional(),
-  authorId: z.string().max(100).optional(),
-  authorName: z.string().max(100).optional(),
-  createdBy: z.string().max(100).optional(),
-  updatedAt: z.union([z.number(), z.string()]).optional(),
-});
+export const boardElementSchema = z
+  .object({
+    id: z.string().min(1).max(100),
+    type: boardElementTypeSchema,
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().optional(),
+    height: z.number().finite().optional(),
+    rotation: z.number().finite().optional(),
+    color: z.string().max(50),
+    fillColor: z.string().max(50).optional(),
+    fill: z.string().max(50).optional(),
+    strokeWidth: z.number().finite().min(0).max(100).optional(),
+    strokeType: z.enum(['solid', 'dashed']).optional(),
+    content: z.string().max(5000).optional(),
+    text: z.string().max(5000).optional(),
+    fontSize: z.number().finite().optional(),
+    fontFamily: z.enum(['sans', 'mono', 'handwritten']).optional(),
+    points: z.array(z.object({ x: z.number().finite(), y: z.number().finite() }).passthrough()).optional(),
+    shapeType: boardShapeTypeSchema.optional(),
+    lineType: boardLineTypeSchema.optional(),
+    zIndex: z.number().finite().optional(),
+    authorId: z.string().max(100).optional(),
+    authorName: z.string().max(100).optional(),
+    createdBy: z.string().max(100).optional(),
+    updatedAt: z.union([z.number(), z.string()]).optional(),
+  })
+  .passthrough();
 
 export const boardSocketClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
@@ -97,6 +76,7 @@ export const boardSocketClientMessageSchema = z.discriminatedUnion('type', [
     userName: z.string().trim().min(1).max(50).optional(),
     userColor: z.string().trim().max(30).optional(),
     creatorToken: z.string().trim().max(100).optional(),
+    token: z.string().trim().max(100).optional(),
   }),
   z.object({
     type: z.literal('CURSOR_MOVE'),
@@ -118,7 +98,7 @@ export const boardSocketClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('LIVE_DRAW'),
     strokeId: z.string().min(1).max(100),
-    points: z.array(z.object({ x: z.number().finite(), y: z.number().finite() })).max(5000),
+    points: z.array(z.object({ x: z.number().finite(), y: z.number().finite() }).passthrough()).max(5000),
     color: z.string().max(50),
     strokeWidth: z.number().finite().min(1).max(100),
     isHighlighter: z.boolean().optional(),
@@ -138,6 +118,20 @@ export const boardSocketClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('TOGGLE_PERMISSIONS'),
     allowParticipantEditing: z.boolean(),
+  }),
+  z.object({
+    type: z.literal('PROMOTE_USER'),
+    targetUserId: z.string().min(1).max(100),
+  }),
+  z.object({
+    type: z.literal('REVOKE_ADMIN'),
+    targetUserId: z.string().min(1).max(100),
+  }),
+  z.object({
+    type: z.literal('START_PRESENTING'),
+  }),
+  z.object({
+    type: z.literal('STOP_PRESENTING'),
   }),
 ]);
 

@@ -140,6 +140,8 @@ export function BoardCanvas({
   // Multi-touch & pointer tracking
   const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const initialPinchDistRef = useRef<number | null>(null);
+  const initialMidpointRef = useRef<{ x: number; y: number } | null>(null);
+  const initialPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const initialZoomRef = useRef<number>(zoom);
 
   // Selection state
@@ -1224,15 +1226,22 @@ export function BoardCanvas({
     hasMovedRef.current = false;
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    // Multi-touch pinch-to-zoom
+    // Multi-touch pinch-to-zoom & two-finger pan
     if (activePointersRef.current.size === 2) {
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
       const p1 = pts[1];
       if (p0 && p1) {
         initialPinchDistRef.current = Math.hypot(p0.x - p1.x, p0.y - p1.y);
+        initialMidpointRef.current = { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
+        initialPanRef.current = { ...pan };
         initialZoomRef.current = zoom;
         setIsDrawing(false);
+        setCurrentPoints([]);
+        setIsDraggingElement(false);
+        setIsAreaErasing(false);
+        setAreaEraseBox(null);
+        strokeIdRef.current = '';
         setIsPanning(false);
         return;
       }
@@ -1463,17 +1472,29 @@ export function BoardCanvas({
       activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
 
-    // Pinch-to-zoom calculation
-    if (activePointersRef.current.size === 2 && initialPinchDistRef.current) {
+    // Pinch-to-zoom & two-finger panning calculation
+    if (activePointersRef.current.size === 2 && initialPinchDistRef.current && initialMidpointRef.current) {
       const pts = Array.from(activePointersRef.current.values());
       const p0 = pts[0];
       const p1 = pts[1];
       if (p0 && p1) {
         const currentDist = Math.hypot(p0.x - p1.x, p0.y - p1.y);
         const factor = currentDist / initialPinchDistRef.current;
-        setZoom(() =>
-          Math.min(3.0, Math.max(0.25, Math.round(initialZoomRef.current * factor * 100) / 100))
-        );
+        const nextZoom = Math.min(3.0, Math.max(0.25, Math.round(initialZoomRef.current * factor * 100) / 100));
+        setZoom(() => nextZoom);
+
+        const currentMidX = (p0.x + p1.x) / 2;
+        const currentMidY = (p0.y + p1.y) / 2;
+        const deltaX = currentMidX - initialMidpointRef.current.x;
+        const deltaY = currentMidY - initialMidpointRef.current.y;
+        const nextPan = {
+          x: initialPanRef.current.x + deltaX,
+          y: initialPanRef.current.y + deltaY,
+        };
+        setPan(nextPan);
+        if (isCreatorRef.current) {
+          onViewportChange?.(nextPan, nextZoom);
+        }
         return;
       }
     }
@@ -1614,7 +1635,13 @@ export function BoardCanvas({
   const handlePointerUp = (e: React.PointerEvent) => {
     activePointersRef.current.delete(e.pointerId);
     if (activePointersRef.current.size < 2) {
+      if (initialPinchDistRef.current !== null) {
+        initialPinchDistRef.current = null;
+        initialMidpointRef.current = null;
+        return;
+      }
       initialPinchDistRef.current = null;
+      initialMidpointRef.current = null;
     }
 
     try {

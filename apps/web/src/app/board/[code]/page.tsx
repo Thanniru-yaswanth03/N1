@@ -41,11 +41,12 @@ export default function StudyBoardRoomPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isExpired, setIsExpired] = useState(false);
   const [isCreator, setIsCreator] = useState<boolean>(false);
+  const [userRole, setUserRole] = useState<'admin' | 'participant'>('participant');
   const [allowParticipantEditing, setAllowParticipantEditing] = useState<boolean>(true);
 
   // Classroom / Presentation mode
-  const [isBroadcastingViewport, setIsBroadcastingViewport] = useState<boolean>(false);
-  const [isFollowingTeacher, setIsFollowingTeacher] = useState<boolean>(true);
+  const [presenterUserId, setPresenterUserId] = useState<string | null>(null);
+  const [isFollowingPresenter, setIsFollowingPresenter] = useState<boolean>(true);
   const [remoteViewport, setRemoteViewport] = useState<{ panX: number; panY: number; zoom: number } | null>(null);
 
   // Live streaming strokes & activity
@@ -82,8 +83,9 @@ export default function StudyBoardRoomPage() {
   // Modals
   const [shareModalOpen, setShareModalOpen] = useState(false);
 
-  // Effective permission
-  const canEdit = isCreator || allowParticipantEditing;
+  // Effective permission: Room Admins (and creator) can always edit. Participants edit when allowed.
+  const isAdmin = userRole === 'admin' || isCreator;
+  const canEdit = isAdmin || allowParticipantEditing;
 
   // 1. Initial Room Load via REST
   useEffect(() => {
@@ -110,6 +112,7 @@ export default function StudyBoardRoomPage() {
         }
         if (data.isCreator || !!storedToken) {
           setIsCreator(true);
+          setUserRole('admin');
         }
         const initElems = data.elements || [];
         setElements(initElems);
@@ -135,7 +138,7 @@ export default function StudyBoardRoomPage() {
     if (!roomCode || isExpired || loading) return;
 
     const socket = connectBoardSocket(roomCode, {
-      onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing) => {
+      onRoomState: (_roomData, initialElements, users, me, isCreatorFlag, allowEditing, role, presenterId) => {
         setElements(initialElements);
         setPeerUsers(users);
         setCurrentUser(me);
@@ -148,8 +151,14 @@ export default function StudyBoardRoomPage() {
         }
         if (isCreatorFlag !== undefined) {
           setIsCreator(isCreatorFlag);
-        } else if (me?.role === 'creator') {
-          setIsCreator(true);
+        }
+        if (role) {
+          setUserRole(role);
+        } else if (isCreatorFlag || me?.role === 'admin' || me?.isOwner) {
+          setUserRole('admin');
+        }
+        if (presenterId !== undefined) {
+          setPresenterUserId(presenterId);
         }
       },
       onUserJoined: user => {
@@ -179,6 +188,9 @@ export default function StudyBoardRoomPage() {
           }
           return prev.filter(u => u.id !== userId);
         });
+        if (presenterUserId === userId) {
+          setPresenterUserId(null);
+        }
       },
       onUserCursor: (userId, _userName, _userColor, x, y) => {
         setPeerUsers(prev =>
@@ -225,7 +237,7 @@ export default function StudyBoardRoomPage() {
         });
       },
       onViewportUpdate: vp => {
-        if (isFollowingTeacher) {
+        if (isFollowingPresenter) {
           setRemoteViewport({ panX: vp.panX, panY: vp.panY, zoom: vp.zoom });
         }
       },
@@ -237,12 +249,34 @@ export default function StudyBoardRoomPage() {
       onPermissionsUpdated: allowed => {
         setAllowParticipantEditing(allowed);
         setRecentActivity({
-          userName: 'Teacher',
-          action: allowed ? 'unlocked student editing' : 'locked student editing to view-only',
+          userName: 'Admin',
+          action: allowed ? 'unlocked participant editing' : 'locked editing to Admins only',
           timestamp: Date.now(),
         });
         if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
         activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
+      },
+      onRoleUpdated: update => {
+        setPeerUsers(prev =>
+          prev.map(u => (u.id === update.userId ? { ...u, role: update.role } : u))
+        );
+        if (currentUser?.id === update.userId) {
+          setUserRole(update.role);
+          setCurrentUser(prev => (prev ? { ...prev, role: update.role } : prev));
+          setRecentActivity({
+            userName: 'System',
+            action:
+              update.role === 'admin'
+                ? 'You were promoted to Room Admin!'
+                : 'Your admin privileges were revoked.',
+            timestamp: Date.now(),
+          });
+          if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
+          activityTimerRef.current = setTimeout(() => setRecentActivity(null), 5000);
+        }
+      },
+      onPresentationState: state => {
+        setPresenterUserId(state.presenterUserId);
       },
       onBoardCleared: () => {
         setElements([]);
@@ -272,7 +306,7 @@ export default function StudyBoardRoomPage() {
       socket.disconnect();
       if (activityTimerRef.current) clearTimeout(activityTimerRef.current);
     };
-  }, [roomCode, isExpired, loading, isFollowingTeacher]);
+  }, [roomCode, isExpired, loading, isFollowingPresenter, currentUser?.id, presenterUserId]);
 
   // Push history state with deduplication to prevent dead undo clicks
   const handleHistoryPush = useCallback(
@@ -404,14 +438,14 @@ export default function StudyBoardRoomPage() {
     [canEdit]
   );
 
-  // Viewport change streaming
+  // Viewport change streaming (broadcasts if current user is active presenter)
   const handleViewportChange = useCallback(
     (pan: { x: number; y: number }, z: number) => {
-      if (isCreator && isBroadcastingViewport) {
+      if (presenterUserId === currentUser?.id) {
         socketRef.current?.sendViewportSync(pan.x, pan.y, z);
       }
     },
-    [isCreator, isBroadcastingViewport]
+    [presenterUserId, currentUser?.id]
   );
 
   // Cursor broadcast
@@ -444,27 +478,32 @@ export default function StudyBoardRoomPage() {
     [roomCode, handleHistoryPush, canEdit]
   );
 
-  // Teacher controls
+  // Classroom & Permission controls
   const handleTogglePermissions = useCallback(() => {
-    if (!isCreator) return;
+    if (!isAdmin) return;
     const next = !allowParticipantEditing;
     setAllowParticipantEditing(next);
     socketRef.current?.sendTogglePermissions(next);
-  }, [isCreator, allowParticipantEditing]);
+  }, [isAdmin, allowParticipantEditing]);
 
-  const handleToggleBroadcastViewport = useCallback(() => {
-    if (!isCreator) return;
-    setIsBroadcastingViewport(prev => {
-      const next = !prev;
-      if (next) {
-        socketRef.current?.sendActivityBroadcast('started broadcasting live screen view');
-      }
-      return next;
-    });
-  }, [isCreator]);
+  const handlePromoteUser = useCallback((userId: string) => {
+    socketRef.current?.sendPromoteUser(userId);
+  }, []);
 
-  const handleToggleFollowTeacher = useCallback(() => {
-    setIsFollowingTeacher(prev => !prev);
+  const handleRevokeAdmin = useCallback((userId: string) => {
+    socketRef.current?.sendRevokeAdmin(userId);
+  }, []);
+
+  const handleStartPresenting = useCallback(() => {
+    socketRef.current?.sendStartPresenting();
+  }, []);
+
+  const handleStopPresenting = useCallback(() => {
+    socketRef.current?.sendStopPresenting();
+  }, []);
+
+  const handleToggleFollowPresenter = useCallback(() => {
+    setIsFollowingPresenter(prev => !prev);
   }, []);
 
   // ── Render Expired State ──
@@ -547,13 +586,17 @@ export default function StudyBoardRoomPage() {
         connectionStatus={connectionStatus}
         connectedUsers={peerUsers}
         currentUser={currentUser}
+        isAdmin={isAdmin}
         isCreator={isCreator}
+        presenterUserId={presenterUserId}
+        isFollowingPresenter={isFollowingPresenter}
+        onToggleFollowPresenter={handleToggleFollowPresenter}
+        onStartPresenting={handleStartPresenting}
+        onStopPresenting={handleStopPresenting}
+        onPromoteUser={handlePromoteUser}
+        onRevokeAdmin={handleRevokeAdmin}
         allowParticipantEditing={allowParticipantEditing}
         onToggleParticipantEditing={handleTogglePermissions}
-        isBroadcastingViewport={isBroadcastingViewport}
-        onToggleBroadcastViewport={handleToggleBroadcastViewport}
-        isFollowingTeacher={isFollowingTeacher}
-        onToggleFollowTeacher={handleToggleFollowTeacher}
         recentActivity={recentActivity}
         onShare={() => setShareModalOpen(true)}
         onExportPng={() => exportBoardAsPng(elements, room?.title || roomCode)}
@@ -605,12 +648,12 @@ export default function StudyBoardRoomPage() {
           onCursorMove={handleCursorMove}
           onHistoryPush={handleHistoryPush}
           canEdit={canEdit}
-          isCreator={isCreator}
+          isCreator={isAdmin}
           remoteLiveStrokes={remoteLiveStrokes}
           onLiveDrawChunk={handleLiveDrawChunk}
           onViewportChange={handleViewportChange}
           externalViewport={
-            isFollowingTeacher && remoteViewport
+            isFollowingPresenter && remoteViewport && presenterUserId !== currentUser?.id
               ? { pan: { x: remoteViewport.panX, y: remoteViewport.panY }, zoom: remoteViewport.zoom }
               : null
           }
