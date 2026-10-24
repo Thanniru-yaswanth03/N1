@@ -1,6 +1,23 @@
 import { HealthCheckData } from '@n1/shared';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+function getApiBaseUrl(): string {
+  if (
+    process.env.NEXT_PUBLIC_API_URL &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://localhost:5000' &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://127.0.0.1:5000'
+  ) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return 'https://n1-api.onrender.com';
+    }
+  }
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 export class ApiError extends Error {
   code: string;
@@ -36,7 +53,7 @@ export interface CreateDropApiResponse {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = `${getApiBaseUrl()}${endpoint}`;
   const headers = new Headers(options.headers || {});
 
   if (!headers.has('Accept')) {
@@ -67,7 +84,7 @@ export const apiClient = {
    * Returns base URL for the API.
    */
   getApiBaseUrl(): string {
-    return API_BASE_URL;
+    return getApiBaseUrl();
   },
 
   /**

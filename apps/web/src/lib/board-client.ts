@@ -7,8 +7,22 @@ import {
   ConnectedBoardUser,
   BoardChatMessage,
 } from '@n1/shared';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+export function getBoardApiBase(): string {
+  if (
+    process.env.NEXT_PUBLIC_API_URL &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://localhost:5000' &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://127.0.0.1:5000'
+  ) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return 'https://n1-api.onrender.com';
+    }
+  }
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
+}
 
 export interface BoardRoomDetail {
   code: string;
@@ -98,7 +112,8 @@ export async function createBoardRoom(
   template: BoardTemplate = 'blank',
   expiresInHours: number = 24
 ): Promise<BoardRoomSummary> {
-  const res = await fetch(`${API_BASE}/api/board/rooms`, {
+  const apiBase = getBoardApiBase();
+  const res = await fetch(`${apiBase}/api/board/rooms`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, template, expiresInHours }),
@@ -129,8 +144,9 @@ export async function createBoardRoom(
 export async function fetchBoardRoom(code: string): Promise<BoardRoomDetail> {
   const cleanCode = code.toUpperCase().trim();
   const clientId = getBoardClientId();
+  const apiBase = getBoardApiBase();
 
-  const res = await fetch(`${API_BASE}/api/board/rooms/${cleanCode}?clientId=${encodeURIComponent(clientId)}`, {
+  const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}?clientId=${encodeURIComponent(clientId)}`, {
     headers: {
       'x-client-id': clientId,
     },
@@ -179,7 +195,8 @@ export async function syncBoardElements(code: string, elements: BoardElement[]):
   try {
     const cleanCode = code.toUpperCase().trim();
     const clientId = getBoardClientId();
-    const res = await fetch(`${API_BASE}/api/board/rooms/${cleanCode}/elements?clientId=${encodeURIComponent(clientId)}`, {
+    const apiBase = getBoardApiBase();
+    const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}/elements?clientId=${encodeURIComponent(clientId)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -200,7 +217,8 @@ export async function clearBoardElements(code: string): Promise<boolean> {
   try {
     const cleanCode = code.toUpperCase().trim();
     const clientId = getBoardClientId();
-    const res = await fetch(`${API_BASE}/api/board/rooms/${cleanCode}/clear?clientId=${encodeURIComponent(clientId)}`, {
+    const apiBase = getBoardApiBase();
+    const res = await fetch(`${apiBase}/api/board/rooms/${cleanCode}/clear?clientId=${encodeURIComponent(clientId)}`, {
       method: 'POST',
       headers: {
         'x-client-id': clientId,
@@ -345,10 +363,11 @@ export function connectBoardSocket(
 
   const clientId = getBoardClientId();
   const resolvedToken = creatorToken || getStoredCreatorToken(roomCode);
+  const apiBase = getBoardApiBase();
 
   const wsUrl = (() => {
     try {
-      const parsed = new URL(API_BASE);
+      const parsed = new URL(apiBase);
       const isSecure = window.location.protocol === 'https:' || parsed.protocol === 'https:';
       const protocol = isSecure ? 'wss:' : 'ws:';
       const nameParam = userName ? `&name=${encodeURIComponent(userName)}` : '';
@@ -357,7 +376,7 @@ export function connectBoardSocket(
       return `${protocol}//${parsed.host}/ws/board?room=${roomCode.toUpperCase().trim()}${nameParam}${tokenParam}${clientParam}`;
     } catch {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const cleanHost = API_BASE.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      const cleanHost = apiBase.replace(/^https?:\/\//, '').replace(/\/+$/, '');
       const nameParam = userName ? `&name=${encodeURIComponent(userName)}` : '';
       const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
       const clientParam = `&clientId=${encodeURIComponent(clientId)}`;

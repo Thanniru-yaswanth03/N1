@@ -9,10 +9,20 @@ import {
 } from '@n1/shared';
 
 const getApiBase = (): string => {
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+  if (
+    process.env.NEXT_PUBLIC_API_URL &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://localhost:5000' &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://127.0.0.1:5000'
+  ) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
   }
-  return 'http://localhost:5000';
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return 'https://n1-api.onrender.com';
+    }
+  }
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 };
 
 const getWsBase = (): string => {

@@ -83,7 +83,12 @@ export function RecentDropsDrawer({ isOpen, onClose }: RecentDropsDrawerProps) {
 
     setDeletingCode(item.code);
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_URL && !process.env.NEXT_PUBLIC_API_URL.includes('localhost')
+          ? process.env.NEXT_PUBLIC_API_URL
+          : typeof window !== 'undefined' && !window.location.hostname.includes('localhost')
+            ? 'https://n1-api.onrender.com'
+            : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000');
       await fetch(`${apiBase}/api/drop/${item.code}`, {
         method: 'DELETE',
         headers: {

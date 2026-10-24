@@ -10,7 +10,23 @@ import {
   TelemetryStatistics,
 } from '@n1/shared';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+function getAdminApiBaseUrl(): string {
+  if (
+    process.env.NEXT_PUBLIC_API_URL &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://localhost:5000' &&
+    process.env.NEXT_PUBLIC_API_URL !== 'http://127.0.0.1:5000'
+  ) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return 'https://n1-api.onrender.com';
+    }
+  }
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
+}
+
 const ADMIN_TOKEN_KEY = 'n1_admin_token';
 const ADMIN_USER_KEY = 'n1_admin_username';
 
@@ -52,7 +68,7 @@ async function adminRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = `${getAdminApiBaseUrl()}${endpoint}`;
   const headers = new Headers(options.headers || {});
 
   if (!headers.has('Accept')) {
@@ -184,7 +200,7 @@ export async function submitAbuseReport(
   dropCode: string,
   data: { reason: string; description?: string }
 ): Promise<{ message: string }> {
-  const url = `${API_BASE_URL}/api/drop/${encodeURIComponent(dropCode)}/report`;
+  const url = `${getAdminApiBaseUrl()}/api/drop/${encodeURIComponent(dropCode)}/report`;
   const response = await fetch(url, {
     method: 'POST',
     headers: {
