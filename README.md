@@ -116,8 +116,8 @@ The flagship engine for exchanging sensitive files, credentials, logs, and code 
 A zero-latency, anonymous collaborative canvas built on persistent WebSockets (`/ws/board`) for study groups, system design sessions, and technical brainstorming.
 
 <div align="center">
-  <img src="docs/screenshots/board-workspace-desktop.png" alt="Study Board Workspace" width="95%" style="border-radius: 10px;" />
-  <p><em>Collaborative canvas with instant shape rendering, sticky notes, text editing, and live multiplayer synchronization.</em></p>
+  <img src="docs/screenshots/board-workspace-desktop.png" alt="Study Board Interactive Workspace" width="95%" style="border-radius: 10px;" />
+  <p><em>Active collaborative canvas loaded with the System Architecture Flowchart template, live peer count, 24h countdown clock, and full vector toolbar.</em></p>
 </div>
 
 #### Key Capabilities:
@@ -135,13 +135,13 @@ A zero-latency, anonymous collaborative canvas built on persistent WebSockets (`
 <div align="center">
   <table width="100%">
     <tr>
-      <td width="50%" align="center">
-        <img src="docs/screenshots/board-client-a-sync.png" alt="Board Client A View" width="100%" />
-        <br/><strong>Client A View</strong><br/><em>Live cursor tracking & drawing</em>
+      <td width="65%" align="center">
+        <img src="docs/screenshots/board-landing-desktop.png" alt="Study Board Hub" width="100%" />
+        <br/><strong>Study Board Hub & 9 Starter Templates</strong><br/><em>Flowchart, Mind Map, CS Architecture, and Math presets</em>
       </td>
-      <td width="50%" align="center">
-        <img src="docs/screenshots/board-client-b-sync.png" alt="Board Client B View" width="100%" />
-        <br/><strong>Client B View</strong><br/><em>Synchronized in real-time across peers</em>
+      <td width="35%" align="center">
+        <img src="docs/screenshots/board-landing-mobile.png" alt="Mobile Study Board Hub" width="100%" />
+        <br/><strong>Responsive Mobile Hub</strong><br/><em>Frictionless touch-first board launching</em>
       </td>
     </tr>
   </table>
@@ -155,7 +155,7 @@ A competitive, timed 1v1 quiz arena built over WebSockets (`/ws/duel`) to test t
 
 <div align="center">
   <img src="docs/screenshots/duel-workspace-desktop.png" alt="Quably Duel Arena" width="95%" style="border-radius: 10px;" />
-  <p><em>Real-time head-to-head technical battle with live synchronized clocks and opponent progress streaming.</em></p>
+  <p><em>Real-time head-to-head technical battle with live synchronized 60-second clock, code snippets, and opponent progress streaming.</em></p>
 </div>
 
 #### Key Capabilities:
@@ -170,12 +170,12 @@ A competitive, timed 1v1 quiz arena built over WebSockets (`/ws/duel`) to test t
   <table width="100%">
     <tr>
       <td width="50%" align="center">
-        <img src="docs/screenshots/duel-client-a-queue.png" alt="Duel Matchmaking Queue" width="100%" />
-        <br/><strong>Matchmaking Queue</strong><br/><em>Instant peer pairing</em>
+        <img src="docs/screenshots/duel-landing-desktop.png" alt="Duel Competencies & Configuration" width="100%" />
+        <br/><strong>Competency Selection Hub</strong><br/><em>10 technical categories, difficulty, & challenge codes</em>
       </td>
       <td width="50%" align="center">
-        <img src="docs/screenshots/duel-client-a-matched.png" alt="Duel Match Found Countdown" width="100%" />
-        <br/><strong>Match Found!</strong><br/><em>Synchronized pre-round countdown</em>
+        <img src="docs/screenshots/duel-client-a-queue.png" alt="Duel Matchmaking Queue" width="100%" />
+        <br/><strong>Matchmaking Queue</strong><br/><em>Live WebSocket matchmaking with queue position tracker</em>
       </td>
     </tr>
   </table>
@@ -233,11 +233,11 @@ Accessible at `/admin` for privacy-respecting platform observability and automat
     <tr>
       <td width="50%" align="center">
         <img src="docs/screenshots/admin-login-desktop.png" alt="Admin Portal Login" width="100%" />
-        <br/><strong>Secure Admin Authentication</strong>
+        <br/><strong>Secure Admin Authentication</strong><br/><em>Scoped passphrase key entry & SHA-256 IP signing</em>
       </td>
       <td width="50%" align="center">
         <img src="docs/screenshots/admin-authenticated-desktop.png" alt="Admin Metrics Dashboard" width="100%" />
-        <br/><strong>Live Telemetry & Abuse Moderation</strong>
+        <br/><strong>Live Operations & Drops Moderation</strong><br/><em>Active drop tracking, storage quotas, and 1-click purges</em>
       </td>
     </tr>
   </table>
