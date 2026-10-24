@@ -4,14 +4,13 @@
 const WebSocket = globalThis.WebSocket;
 
 const BASE_WS_URL = process.env.API_WS_URL || 'wss://n1-api.onrender.com/ws/board';
-const TEST_ROOM = process.env.TEST_ROOM || '7BTFYA';
+const BASE_HTTP_URL = process.env.API_HTTP_URL || 'https://n1-api.onrender.com';
 
 console.log('--- N1 REAL-TIME COLLABORATIVE STUDY BOARD MULTI-CLIENT VERIFICATION ---');
-console.log(`Connecting to: ${BASE_WS_URL}?room=${TEST_ROOM}`);
 
-function createClient(name, color, token = '') {
+function createClient(roomCode, name, color, token = '') {
   return new Promise((resolve, reject) => {
-    const url = `${BASE_WS_URL}?room=${TEST_ROOM}&name=${encodeURIComponent(name)}&color=${encodeURIComponent(color)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+    const url = `${BASE_WS_URL}?room=${roomCode}&name=${encodeURIComponent(name)}&color=${encodeURIComponent(color)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
     const ws = new WebSocket(url);
     const messages = [];
     const eventResolvers = [];
@@ -91,12 +90,23 @@ function createClient(name, color, token = '') {
 async function runTwoClientVerification() {
   let clientA, clientB;
   try {
+    console.log('\n[Phase 0] Creating a fresh live study room on Render API...');
+    const roomResp = await fetch(`${BASE_HTTP_URL}/api/board/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Live Auto-Focus Verification Room', template: 'blank' }),
+    });
+    const roomJson = await roomResp.json();
+    const roomCode = roomJson.data?.code || roomJson.room?.code || roomJson.code;
+    const creatorToken = roomJson.data?.creatorToken || roomJson.creatorToken;
+    console.log(`✓ Created live room: ${roomCode} with creatorToken: ${creatorToken?.slice(0, 8)}...`);
+
     console.log('\n[Phase 1] Connecting Client A (Admin/Creator)...');
-    clientA = await createClient('Admin_Alice', '#00f0ff');
+    clientA = await createClient(roomCode, 'Admin_Alice', '#00f0ff', creatorToken);
     console.log(`Client A joined as: role=${clientA.initialState.currentUser.role}, isCreator=${clientA.initialState.isCreator}`);
 
     console.log('\n[Phase 2] Connecting Client B (Participant)...');
-    clientB = await createClient('Student_Bob', '#fbbf24');
+    clientB = await createClient(roomCode, 'Student_Bob', '#fbbf24');
     console.log(`Client B joined as: role=${clientB.initialState.currentUser.role}, isCreator=${clientB.initialState.isCreator}`);
 
     // Wait for Client A to see Client B join
