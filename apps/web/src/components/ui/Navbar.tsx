@@ -101,7 +101,7 @@ export function Navbar() {
   ];
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex justify-center pt-3.5 px-4 pointer-events-none">
+    <header className="fixed top-0 left-0 right-0 z-50 flex justify-center pt-[calc(0.875rem+env(safe-area-inset-top,0px))] px-4 pointer-events-none">
       <div className="w-full max-w-[1080px] h-[60px] px-4 sm:px-6 rounded-full border border-n1-border-subtle bg-n1-surface/75 backdrop-blur-md shadow-md flex items-center justify-between pointer-events-auto transition-all duration-300">
         {/* Brand / Logo */}
         <Link href="/" className="flex items-center text-decoration-none group">
@@ -282,7 +282,7 @@ export function Navbar() {
             onClick={() => setMobileMenuOpen(false)}
             aria-hidden="true"
           />
-          <div className="md:hidden fixed top-[76px] left-4 right-4 z-50 p-5 rounded-2xl bg-n1-surface-raised/95 backdrop-blur-xl border border-n1-border shadow-2xl pointer-events-auto animate-in slide-in-from-top-4 duration-200">
+          <div className="md:hidden fixed top-[calc(76px+env(safe-area-inset-top,0px))] left-4 right-4 z-50 p-5 rounded-2xl bg-n1-surface-raised/95 backdrop-blur-xl border border-n1-border shadow-2xl pointer-events-auto animate-in slide-in-from-top-4 duration-200">
             <nav className="flex flex-col gap-3">
               {navLinks.map(link =>
                 link.disabled ? (

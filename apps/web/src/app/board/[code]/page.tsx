@@ -948,7 +948,7 @@ export default function StudyBoardRoomPage() {
   }
 
   return (
-    <div className="fixed inset-0 z-40 w-screen h-screen overflow-hidden bg-[#09090f] flex flex-col">
+    <div className="fixed inset-0 z-40 w-full h-[100dvh] overflow-hidden bg-[#09090f] flex flex-col">
       {/* ── Top Header ── */}
       <BoardHeader
         roomCode={roomCode}
@@ -1003,7 +1003,7 @@ export default function StudyBoardRoomPage() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed top-16 left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold flex items-center gap-2 backdrop-blur-md shadow-xl animate-fadeIn max-w-[90vw] text-center"
+          className="fixed top-[calc(4rem+env(safe-area-inset-top,0px))] left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold flex items-center gap-2 backdrop-blur-md shadow-xl animate-fadeIn max-w-[90vw] text-center"
         >
           <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
           <span>
@@ -1017,7 +1017,7 @@ export default function StudyBoardRoomPage() {
       )}
 
       {/* ── Main Canvas Engine ── */}
-      <main className="flex-1 w-full h-full pt-14">
+      <main className="flex-1 w-full h-full pt-[calc(3.5rem+env(safe-area-inset-top,0px))]">
         <BoardCanvas
           elements={elements}
           setElements={setElements}
@@ -1054,7 +1054,9 @@ export default function StudyBoardRoomPage() {
       {!isAdmin && (
         <div
           className={`fixed ${
-            connectionStatus !== 'CONNECTED' ? 'top-26' : 'top-16'
+            connectionStatus !== 'CONNECTED'
+              ? 'top-[calc(6.5rem+env(safe-area-inset-top,0px))]'
+              : 'top-[calc(4.25rem+env(safe-area-inset-top,0px))]'
           } left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in slide-in-from-top-2 duration-200 select-none max-w-[94vw]`}
         >
           {isUserExploring ? (

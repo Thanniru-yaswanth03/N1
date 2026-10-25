@@ -85,7 +85,7 @@ export function ParticipantsModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-lg rounded-3xl border border-cyan-500/30 bg-[#0c0c16] shadow-[0_20px_60px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col max-h-[92vh]">
+      <div className="w-full max-w-lg rounded-3xl border border-cyan-500/30 bg-[#0c0c16] shadow-[0_20px_60px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col max-h-[90dvh]">
         {/* Header */}
         <div className="px-4 py-3.5 sm:px-6 sm:py-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
           <div className="flex items-center gap-3">

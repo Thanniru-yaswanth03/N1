@@ -77,9 +77,9 @@ export function BoardChatDrawer({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full sm:w-[380px] md:w-[420px] h-full bg-[#0d0d18] border-l border-white/10 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 select-none">
+      <div className="w-full sm:w-[380px] md:w-[420px] h-[100dvh] max-h-[100dvh] bg-[#0d0d18] border-l border-white/10 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 select-none overflow-hidden">
         {/* Header */}
-        <div className="p-3 sm:p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+        <div className="p-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] sm:p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-300 font-bold text-sm">
               💬
@@ -293,7 +293,7 @@ export function BoardChatDrawer({
         {/* Input Bar */}
         <form
           onSubmit={handleSend}
-          className="p-3 border-t border-white/10 bg-white/[0.02] flex items-center gap-2"
+          className="p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] border-t border-white/10 bg-white/[0.02] flex items-center gap-2"
         >
           <input
             ref={inputRef}

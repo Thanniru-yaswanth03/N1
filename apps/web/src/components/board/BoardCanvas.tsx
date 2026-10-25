@@ -325,10 +325,12 @@ export function BoardCanvas({
     ];
   }, []);
 
-  // Find handle under world coordinate
+  // Find handle under world coordinate (with touch-friendly hit tolerance)
   const findHandleAt = useCallback(
     (world: BoardPoint, el: BoardElement): HandleInfo | null => {
-      const radius = 10 / zoom;
+      const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+      const hitRadiusPx = isTouch ? 22 : 12;
+      const radius = hitRadiusPx / zoom;
       const handles = getHandles(el);
       for (const h of handles) {
         if (Math.hypot(world.x - h.x, world.y - h.y) <= radius) {
@@ -560,7 +562,7 @@ export function BoardCanvas({
     setActiveTool?.('select');
   }, [editingId, editingOriginalText, onElementsChange, onHistoryPush, setActiveTool, setElements]);
 
-  // Resize canvas to fill container with devicePixelRatio
+  // Resize canvas to fill container with devicePixelRatio and ResizeObserver
   useEffect(() => {
     const handleResize = () => {
       const canvas = canvasRef.current;
@@ -571,20 +573,37 @@ export function BoardCanvas({
       const width = container.clientWidth;
       const height = container.clientHeight;
 
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
+      if (width === 0 || height === 0) return;
+
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
 
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.scale(dpr, dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
     };
 
     handleResize();
+
+    const container = containerRef.current;
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && container) {
+      ro = new ResizeObserver(() => {
+        handleResize();
+      });
+      ro.observe(container);
+    }
+
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
   }, []);
 
   // Fit to screen calculation listener
@@ -824,10 +843,12 @@ export function BoardCanvas({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width / (window.devicePixelRatio || 1);
-    const height = canvas.height / (window.devicePixelRatio || 1);
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.width / dpr;
+    const height = canvas.height / dpr;
 
-    // Clear background
+    // Reset transform to exact devicePixelRatio before clearing
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
     ctx.save();
