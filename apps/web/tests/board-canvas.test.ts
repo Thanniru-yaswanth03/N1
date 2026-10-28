@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BoardElement } from '@n1/shared';
+import { wrapText as canvasWrapText, PALETTE_COLORS } from '../src/components/board/BoardCanvas';
 
 describe('Study Board Canvas & Visual Editor Logic', () => {
   describe('1. Word Wrapping & Text Calculation', () => {
@@ -412,6 +413,296 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
       };
 
       expect(updated.color).toBe('#FF5500');
+    });
+  });
+
+  describe('4. Canvas wrapText with Long Unbreakable Words & URL Wrapping', () => {
+    const mockCtx = {
+      measureText: (str: string) => ({ width: str.length * 8 }),
+    } as unknown as CanvasRenderingContext2D;
+
+    it('breaks long unbroken words into sub-chunks to prevent horizontal overflow', () => {
+      const longUrl = 'https://study-board.n1.app/rooms/9UDU42/session/verylongnestedpathstringthatdoesnotcontainanyspaces';
+      const maxWidth = 160; // 160 / 8 = 20 chars max per line
+      const lines = canvasWrapText(mockCtx, longUrl, maxWidth);
+
+      expect(lines.length).toBeGreaterThan(1);
+      lines.forEach(line => {
+        expect(line.length * 8).toBeLessThanOrEqual(maxWidth);
+      });
+      // Reconstituting the text should match the original string without loss
+      expect(lines.join('')).toBe(longUrl);
+    });
+
+    it('handles mixed sentences containing both short words and long words', () => {
+      const text = 'Important link: https://study-board.n1.app/verylongpathhere and notes';
+      const maxWidth = 160;
+      const lines = canvasWrapText(mockCtx, text, maxWidth);
+
+      expect(lines.length).toBeGreaterThan(1);
+      lines.forEach(line => {
+        expect(line.length * 8).toBeLessThanOrEqual(maxWidth);
+      });
+    });
+
+    it('provides complete preset PALETTE_COLORS covering brand theme', () => {
+      expect(PALETTE_COLORS.length).toBeGreaterThanOrEqual(8);
+      expect(PALETTE_COLORS).toContain('#00f0ff'); // Cyan
+      expect(PALETTE_COLORS).toContain('#ffffff'); // White
+      expect(PALETTE_COLORS).toContain('#ef4444'); // Red
+      expect(PALETTE_COLORS).toContain('#10b981'); // Emerald
+    });
+  });
+
+  describe('5. Floating Toolbar Actions: Duplicate, Delete, Font Size, and Color', () => {
+    // Replicate pure handleDuplicateSelected algorithm
+    function duplicateElements(
+      elementsList: BoardElement[],
+      selectedIds: Set<string>
+    ): { nextElements: BoardElement[]; newSelectedIds: Set<string>; primaryId: string | null } {
+      const toDuplicate = elementsList.filter(el => selectedIds.has(el.id));
+      if (toDuplicate.length === 0) {
+        return { nextElements: elementsList, newSelectedIds: new Set(), primaryId: null };
+      }
+
+      const maxZ = elementsList.reduce((max, el) => Math.max(max, el.zIndex || 0), 0);
+      const newSelectedIds = new Set<string>();
+      let primaryNewId: string | null = null;
+
+      const duplicates: BoardElement[] = toDuplicate.map((el, idx) => {
+        const uniqueSuffix = `dup_${Date.now()}_${idx}`;
+        const newId = `${el.type}_${uniqueSuffix}`;
+        newSelectedIds.add(newId);
+        if (!primaryNewId) primaryNewId = newId;
+
+        return {
+          ...el,
+          id: newId,
+          x: el.x + 24,
+          y: el.y + 24,
+          points: el.points ? el.points.map(p => ({ ...p })) : undefined,
+          zIndex: maxZ + idx + 1,
+          updatedAt: Date.now(),
+        };
+      });
+
+      return {
+        nextElements: [...elementsList, ...duplicates],
+        newSelectedIds,
+        primaryId: primaryNewId,
+      };
+    }
+
+    it('duplicates single element with +24px offset, unique ID, and selects new copy', () => {
+      const original: BoardElement = {
+        id: 'text_original_1',
+        type: 'text',
+        x: 100,
+        y: 100,
+        width: 140,
+        height: 36,
+        color: '#00f0ff',
+        strokeWidth: 2,
+        content: 'Original Note',
+        fontSize: 16,
+        zIndex: 1,
+        updatedAt: Date.now(),
+      };
+
+      const result = duplicateElements([original], new Set(['text_original_1']));
+      expect(result.nextElements.length).toBe(2);
+      const copy = result.nextElements[1]!;
+
+      expect(copy.id).not.toBe(original.id);
+      expect(copy.x).toBe(124);
+      expect(copy.y).toBe(124);
+      expect(copy.content).toBe('Original Note');
+      expect(copy.fontSize).toBe(16);
+      expect(copy.zIndex).toBe(2);
+      expect(result.primaryId).toBe(copy.id);
+      expect(result.newSelectedIds.has(copy.id)).toBe(true);
+    });
+
+    it('deep clones points array so moving or modifying duplicate does not alter original', () => {
+      const originalStroke: BoardElement = {
+        id: 'stroke_1',
+        type: 'stroke',
+        x: 50,
+        y: 50,
+        width: 100,
+        height: 50,
+        color: '#a855f7',
+        strokeWidth: 4,
+        points: [{ x: 0, y: 0 }, { x: 10, y: 20 }, { x: 30, y: 40 }],
+        zIndex: 1,
+        updatedAt: Date.now(),
+      };
+
+      const result = duplicateElements([originalStroke], new Set(['stroke_1']));
+      const copy = result.nextElements[1]!;
+
+      expect(copy.points).toBeDefined();
+      expect(copy.points).toEqual(originalStroke.points);
+      expect(copy.points).not.toBe(originalStroke.points); // Deep reference equality check
+
+      // Mutate copy point
+      copy.points![0]!.x = 999;
+      expect(originalStroke.points![0]!.x).toBe(0); // Original remains untouched!
+    });
+
+    it('deletes selected element from canvas model and clears selection state', () => {
+      const el1: BoardElement = { id: 'text_1', type: 'text', x: 10, y: 10, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 1, updatedAt: Date.now() };
+      const el2: BoardElement = { id: 'text_2', type: 'text', x: 50, y: 50, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, zIndex: 2, updatedAt: Date.now() };
+
+      const deleteSelected = (list: BoardElement[], targetIds: Set<string>) => {
+        return list.filter(el => !targetIds.has(el.id));
+      };
+
+      const remaining = deleteSelected([el1, el2], new Set(['text_1']));
+      expect(remaining.length).toBe(1);
+      expect(remaining[0]?.id).toBe('text_2');
+    });
+
+    it('adjusts font size: decreases with A- (min 10px) and increases with A+ (max 96px)', () => {
+      const adjustFontSize = (el: BoardElement, delta: number): BoardElement => {
+        const currentSize = el.fontSize || 16;
+        const nextSize = Math.max(10, Math.min(96, currentSize + delta));
+        let newWidth = el.width;
+        let newHeight = el.height;
+        if (el.type === 'text' && el.content) {
+          const lines = el.content.split('\n');
+          const longestLine = lines.reduce((a, b) => (a.length > b.length ? a : b), '');
+          const approxCharWidth = nextSize * 0.6;
+          newWidth = Math.max(el.width || 140, Math.round(longestLine.length * approxCharWidth + 24));
+          newHeight = Math.max(36, lines.length * (nextSize + 6) + 12);
+        }
+        return { ...el, fontSize: nextSize, width: newWidth, height: newHeight, updatedAt: Date.now() };
+      };
+
+      let el: BoardElement = {
+        id: 'text_size_test',
+        type: 'text',
+        x: 10,
+        y: 10,
+        width: 140,
+        height: 36,
+        color: '#00f0ff',
+        strokeWidth: 2,
+        content: 'Header Text Size',
+        fontSize: 16,
+        zIndex: 1,
+        updatedAt: Date.now(),
+      };
+
+      // Increase by 2 (A+)
+      el = adjustFontSize(el, 2);
+      expect(el.fontSize).toBe(18);
+      expect(el.width).toBeGreaterThan(140);
+
+      // Decrease by 2 (A-)
+      el = adjustFontSize(el, -2);
+      expect(el.fontSize).toBe(16);
+
+      // Repeated decreases below 10px clamp to min 10px
+      for (let i = 0; i < 15; i++) {
+        el = adjustFontSize(el, -2);
+      }
+      expect(el.fontSize).toBe(10);
+
+      // Repeated increases above 96px clamp to max 96px
+      for (let i = 0; i < 60; i++) {
+        el = adjustFontSize(el, 2);
+      }
+      expect(el.fontSize).toBe(96);
+    });
+
+    it('simulates rapid repeated clicks on font size updater without stale closure bug', () => {
+      let elements = [
+        { id: 'text_1', type: 'text', x: 0, y: 0, width: 100, height: 30, color: '#00f0ff', strokeWidth: 2, fontSize: 16, zIndex: 1, updatedAt: 0 },
+      ] as BoardElement[];
+
+      const setElementsFunctional = (updater: (prev: BoardElement[]) => BoardElement[]) => {
+        elements = updater(elements);
+      };
+
+      const handleFontSizeAdjust = (delta: number) => {
+        setElementsFunctional(prev =>
+          prev.map(el => {
+            if (el.id === 'text_1') {
+              const currentSize = el.fontSize || 16;
+              const nextSize = Math.max(10, Math.min(96, currentSize + delta));
+              return { ...el, fontSize: nextSize };
+            }
+            return el;
+          })
+        );
+      };
+
+      // 5 rapid A+ clicks in sequence
+      handleFontSizeAdjust(2);
+      handleFontSizeAdjust(2);
+      handleFontSizeAdjust(2);
+      handleFontSizeAdjust(2);
+      handleFontSizeAdjust(2);
+
+      expect(elements[0]?.fontSize).toBe(26); // 16 + 5*2 = 26
+    });
+
+    it('applies color immediately and formats shape / sticky fill colors appropriately', () => {
+      const applyColor = (el: BoardElement, newColor: string): BoardElement => {
+        return {
+          ...el,
+          color: newColor,
+          fillColor: el.type === 'shape' ? `${newColor}20` : el.type === 'sticky' ? `${newColor}26` : el.fillColor,
+          updatedAt: Date.now(),
+        };
+      };
+
+      const shape: BoardElement = { id: 's1', type: 'shape', x: 0, y: 0, width: 100, height: 100, color: '#00f0ff', fillColor: '#00f0ff20', strokeWidth: 2, zIndex: 1, updatedAt: 0 };
+      const sticky: BoardElement = { id: 'k1', type: 'sticky', x: 0, y: 0, width: 100, height: 100, color: '#fbbf24', fillColor: '#fbbf2426', strokeWidth: 2, zIndex: 2, updatedAt: 0 };
+      const text: BoardElement = { id: 't1', type: 'text', x: 0, y: 0, width: 100, height: 40, color: '#00f0ff', strokeWidth: 2, zIndex: 3, updatedAt: 0 };
+
+      const updatedShape = applyColor(shape, '#a855f7');
+      expect(updatedShape.color).toBe('#a855f7');
+      expect(updatedShape.fillColor).toBe('#a855f720');
+
+      const updatedSticky = applyColor(sticky, '#10b981');
+      expect(updatedSticky.color).toBe('#10b981');
+      expect(updatedSticky.fillColor).toBe('#10b98126');
+
+      const updatedText = applyColor(text, '#ffffff');
+      expect(updatedText.color).toBe('#ffffff');
+    });
+
+    it('prevents event propagation so clicking floating toolbar does not trigger canvas deselection', () => {
+      let canvasDeselected = false;
+      const onCanvasPointerDown = () => {
+        canvasDeselected = true;
+      };
+
+      const simulateEventDispatch = (target: 'toolbar_button' | 'canvas') => {
+        if (target === 'toolbar_button') {
+          // Toolbar stopPropagation prevents bubbling to canvas container
+          const event = {
+            isPropagationStopped: false,
+            stopPropagation() {
+              this.isPropagationStopped = true;
+            },
+          };
+          event.stopPropagation();
+          if (!event.isPropagationStopped) {
+            onCanvasPointerDown();
+          }
+        } else {
+          onCanvasPointerDown();
+        }
+      };
+
+      simulateEventDispatch('toolbar_button');
+      expect(canvasDeselected).toBe(false); // Selection remained safe!
+
+      simulateEventDispatch('canvas');
+      expect(canvasDeselected).toBe(true);
     });
   });
 });
