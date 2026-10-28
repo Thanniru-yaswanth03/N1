@@ -607,12 +607,16 @@ export function BoardCanvas({
     setActiveTool?.('select');
   }, [editingId, editingOriginalText, onElementsChange, onHistoryPush, setActiveTool, setElements]);
 
-  // Auto-save in-progress text editing when activeTool changes
+  // Auto-save in-progress text editing ONLY when activeTool actually changes
+  const prevToolRef = useRef(activeTool);
   useEffect(() => {
-    if (editingId) {
-      saveEditing();
+    if (prevToolRef.current !== activeTool) {
+      prevToolRef.current = activeTool;
+      if (editingId) {
+        saveEditing();
+      }
     }
-  }, [activeTool, saveEditing]);
+  }, [activeTool, editingId, saveEditing]);
 
   // Unified duplicate handler for single or multiple selected elements
   const handleDuplicateSelected = useCallback(() => {
@@ -862,24 +866,8 @@ export function BoardCanvas({
         target?.isContentEditable ||
         Boolean(editingId);
 
-      // Keys handled when typing inside active in-place textarea
-      if (editingId) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          cancelEditing();
-          return;
-        }
-        // Ctrl/Cmd + Enter commits inline text editing (plain Enter creates new lines in textarea)
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-          e.preventDefault();
-          saveEditing();
-          return;
-        }
-        return;
-      }
-
-      // If user is typing in another input/modal, do not intercept
-      if (isInput) return;
+      // If user is editing or inside any input, NEVER intercept keyboard events on window
+      if (isInput || editingId) return;
 
       // Spacebar for hand pan
       if (e.code === 'Space' && !isSpacePressed) {
@@ -2273,7 +2261,7 @@ export function BoardCanvas({
               {selectedIds.size > 1
                 ? `${selectedIds.size} items`
                 : selectedElement?.type === 'text'
-                ? '𝐓 Text Block'
+                ? 'Text Block'
                 : selectedElement?.type === 'sticky'
                 ? '📝 Sticky Note'
                 : selectedElement?.type === 'shape'
@@ -2542,29 +2530,26 @@ export function BoardCanvas({
                 return;
               }
 
-              // Ctrl/Cmd + Enter commits inline text editing
-              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+              // Enter key logic:
+              // For text blocks and shapes: Enter (without Shift) commits and saves; Shift+Enter inserts newline.
+              // For sticky notes: Enter inserts newline; Ctrl/Cmd+Enter commits and saves.
+              if (e.key === 'Enter') {
+                if (editingElement?.type === 'sticky') {
+                  if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    saveEditing();
+                  }
+                  return;
+                }
+                if (e.shiftKey) {
+                  // Shift + Enter inserts newline for text blocks
+                  return;
+                }
+                // Plain Enter commits and saves text blocks and shapes!
                 e.preventDefault();
                 saveEditing();
                 return;
               }
-
-              // Tab inserts 2 spaces without losing focus
-              if (e.key === 'Tab') {
-                e.preventDefault();
-                const start = e.currentTarget.selectionStart;
-                const end = e.currentTarget.selectionEnd;
-                const val = e.currentTarget.value;
-                setEditingText(val.substring(0, start) + '  ' + val.substring(end));
-                setTimeout(() => {
-                  if (textareaRef.current) {
-                    textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + 2;
-                  }
-                }, 0);
-                return;
-              }
-
-              // Plain Enter inserts newline naturally for multiline text
             }}
             onKeyUp={e => e.stopPropagation()}
             onBlur={() => {

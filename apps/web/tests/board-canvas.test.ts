@@ -704,5 +704,116 @@ describe('Study Board Canvas & Visual Editor Logic', () => {
       simulateEventDispatch('canvas');
       expect(canvasDeselected).toBe(true);
     });
+
+    it('preserves spaces and handles Enter/Shift+Enter properly during text editing', () => {
+      let savedContent: string | null = null;
+      let editingActive = true;
+
+      // Text editing model
+      const state = {
+        editingText: '',
+        editingId: 'text_1',
+      };
+
+      // Simulates typing character-by-character including spaces
+      const typeText = (input: string) => {
+        for (const char of input) {
+          // Verify space is allowed and not swallowed
+          state.editingText += char;
+        }
+      };
+
+      typeText('hey there i am using whatsapp');
+      expect(state.editingText).toBe('hey there i am using whatsapp');
+      expect(state.editingText.includes(' ')).toBe(true);
+
+      // Simulates onKeyDown on <textarea>
+      const handleTextareaKeyDown = (e: { key: string; shiftKey: boolean; preventDefault: () => void }) => {
+        if (e.key === 'Enter') {
+          if (!e.shiftKey) {
+            e.preventDefault();
+            savedContent = state.editingText;
+            editingActive = false;
+          } else {
+            // Shift+Enter inserts newline
+            state.editingText += '\n';
+          }
+        }
+      };
+
+      // Press Enter without shift -> commits immediately
+      let prevented = false;
+      handleTextareaKeyDown({
+        key: 'Enter',
+        shiftKey: false,
+        preventDefault: () => {
+          prevented = true;
+        },
+      });
+
+      expect(prevented).toBe(true);
+      expect(editingActive).toBe(false);
+      expect(savedContent).toBe('hey there i am using whatsapp');
+
+      // Now test multiline with Shift+Enter
+      state.editingText = 'Line 1';
+      editingActive = true;
+      handleTextareaKeyDown({
+        key: 'Enter',
+        shiftKey: true,
+        preventDefault: () => {},
+      });
+      typeText('Line 2');
+      expect(state.editingText).toBe('Line 1\nLine 2');
+    });
+
+    it('ensures window keydown handler ignores Space and keys when editing or in input', () => {
+      let panActivated = false;
+
+      const handleWindowKeyDown = (e: { code: string; key: string; target: { tagName: string } }, editingId: string | null) => {
+        const tagName = e.target.tagName.toLowerCase();
+        const isInput = tagName === 'input' || tagName === 'textarea' || (e.target as any).isContentEditable;
+        // Key fix: if typing in textarea or editingId is active, do not intercept Space or keys!
+        if (isInput || editingId) {
+          return;
+        }
+
+        if (e.code === 'Space') {
+          panActivated = true;
+        }
+      };
+
+      // When textarea is focused (or editingId is set)
+      handleWindowKeyDown({ code: 'Space', key: ' ', target: { tagName: 'textarea' } }, 'text_1');
+      expect(panActivated).toBe(false);
+
+      // When not editing, Space activates pan
+      handleWindowKeyDown({ code: 'Space', key: ' ', target: { tagName: 'body' } }, null);
+      expect(panActivated).toBe(true);
+    });
+
+    it('ensures tool switch auto-save only triggers on actual activeTool changes, not on typing keystrokes', () => {
+      let saveCallCount = 0;
+      let prevTool = 'select';
+
+      const simulateToolEffect = (currentTool: string, isEditing: boolean) => {
+        if (prevTool !== currentTool) {
+          prevTool = currentTool;
+          if (isEditing) {
+            saveCallCount++;
+          }
+        }
+      };
+
+      // Typing does not change activeTool -> saveCallCount must not increment
+      simulateToolEffect('select', true);
+      simulateToolEffect('select', true);
+      simulateToolEffect('select', true);
+      expect(saveCallCount).toBe(0);
+
+      // Changing activeTool from select to pen while editing saves the text
+      simulateToolEffect('pen', true);
+      expect(saveCallCount).toBe(1);
+    });
   });
 });

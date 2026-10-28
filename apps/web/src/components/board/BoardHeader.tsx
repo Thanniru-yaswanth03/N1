@@ -169,7 +169,7 @@ export function BoardHeader({
     <>
       <header
         ref={headerRef}
-        className="fixed top-0 left-0 right-0 z-40 h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] px-2 sm:px-4 border-b border-[var(--color-border-subtle)] bg-[#09090f]/95 backdrop-blur-xl flex items-center justify-between gap-1 sm:gap-2 select-none w-full max-w-full overflow-hidden"
+        className="fixed top-0 left-0 right-0 z-40 h-[calc(3.5rem+env(safe-area-inset-top,0px))] pt-[env(safe-area-inset-top,0px)] px-2 sm:px-4 border-b border-[var(--color-border-subtle)] bg-[#09090f]/95 backdrop-blur-xl flex items-center justify-between gap-1 sm:gap-2 select-none w-full max-w-full overflow-visible"
       >
         {/* ── Left: Back Link, Room Code Badge, Role Pill, Title ── */}
         <div className="flex items-center gap-1 sm:gap-2 min-w-0 shrink-0">
@@ -294,8 +294,13 @@ export function BoardHeader({
               </button>
 
               {hostMenuOpen && (
-                <div className="fixed top-14 right-2 sm:absolute sm:top-full sm:right-0 mt-2 p-2 rounded-2xl border border-amber-500/40 bg-[#121222] shadow-[0_10px_35px_rgba(0,0,0,0.85)] w-[280px] max-w-[calc(100vw-1rem)] z-50 space-y-2 animate-in fade-in zoom-in-95 duration-100 text-left">
-                  <div className="px-2 py-1 border-b border-white/10 flex items-center justify-between">
+                <>
+                  <div
+                    className="fixed inset-0 z-40 bg-black/40 sm:hidden"
+                    onClick={() => setHostMenuOpen(false)}
+                  />
+                  <div className="fixed top-[calc(3.5rem+env(safe-area-inset-top,0px)+8px)] right-2 left-2 sm:left-auto sm:right-0 sm:absolute sm:top-full mt-2 p-2 rounded-2xl border border-amber-500/40 bg-[#121222] shadow-[0_10px_35px_rgba(0,0,0,0.85)] w-auto sm:w-[290px] z-50 space-y-2 animate-in fade-in zoom-in-95 duration-100 text-left">
+                    <div className="px-2 py-1 border-b border-white/10 flex items-center justify-between">
                     <div>
                       <div className="text-[11px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1">
                         <span>👑</span>
@@ -444,7 +449,8 @@ export function BoardHeader({
                     )}
                   </div>
                 </div>
-              )}
+              </>
+            )}
             </div>
           ) : onClaimHost ? (
             <button
@@ -733,7 +739,12 @@ export function BoardHeader({
             </button>
 
             {moreMenuOpen && (
-              <div className="fixed top-14 right-2 p-2.5 rounded-2xl border border-white/10 bg-[#12121e]/98 backdrop-blur-xl shadow-2xl w-[270px] max-w-[calc(100vw-1rem)] z-50 space-y-2 animate-in fade-in zoom-in-95 duration-100 text-left max-h-[82vh] overflow-y-auto">
+              <>
+                <div
+                  className="fixed inset-0 z-40 bg-black/40 sm:hidden"
+                  onClick={() => setMoreMenuOpen(false)}
+                />
+                <div className="fixed top-[calc(3.5rem+env(safe-area-inset-top,0px)+8px)] right-2 left-2 sm:left-auto sm:right-0 sm:absolute sm:top-full mt-2 p-2.5 rounded-2xl border border-white/10 bg-[#12121e]/98 backdrop-blur-xl shadow-2xl w-auto sm:w-[270px] z-50 space-y-2 animate-in fade-in zoom-in-95 duration-100 text-left max-h-[82vh] overflow-y-auto">
                 <div className="px-1.5 py-1 border-b border-white/10 flex items-center justify-between">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold">
                     Classroom Actions
@@ -903,7 +914,8 @@ export function BoardHeader({
                   </button>
                 </div>
               </div>
-            )}
+            </>
+          )}
           </div>
         </div>
       </header>
