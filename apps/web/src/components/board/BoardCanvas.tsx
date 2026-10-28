@@ -261,7 +261,6 @@ export function BoardCanvas({
   const [isDraggingElement, setIsDraggingElement] = useState(false);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [dragStartMap, setDragStartMap] = useState<Map<string, { x: number; y: number }>>(new Map());
-  const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const wasAlreadySelectedRef = useRef<boolean>(false);
   const previouslySelectedIdRef = useRef<string | null>(null);
 
@@ -351,12 +350,21 @@ export function BoardCanvas({
     [pan, zoom]
   );
 
-  // Get 8 resize handles for an element
+  // Get resize handles for an element (4 corners for text to prevent clutter, 8 for shapes/stickies)
   const getHandles = useCallback((el: BoardElement): HandleInfo[] => {
     const w = el.width || 40;
     const h = el.height || 40;
     const x = el.x;
     const y = el.y;
+
+    if (el.type === 'text') {
+      return [
+        { id: 'nw', x, y, cursor: 'nwse-resize' },
+        { id: 'ne', x: x + w, y, cursor: 'nesw-resize' },
+        { id: 'se', x: x + w, y: y + h, cursor: 'nwse-resize' },
+        { id: 'sw', x, y: y + h, cursor: 'nesw-resize' },
+      ];
+    }
 
     return [
       { id: 'nw', x, y, cursor: 'nwse-resize' },
@@ -677,7 +685,6 @@ export function BoardCanvas({
 
     setSelectedId(null);
     setSelectedIds(new Set());
-    setColorPickerOpen(false);
   }, [selectedId, selectedIds, onElementsChange, onHistoryPush]);
 
   // Dynamic font size adjust handler (A- and A+) with bounds check and dimension recalculation
@@ -1255,34 +1262,41 @@ export function BoardCanvas({
         }
       }
 
-      // Selection bounding box & 8 functional resize handles (suppressed when actively editing)
+      // Selection bounding box & functional resize handles (suppressed when actively editing)
       if (selectedIds.has(el.id) && el.id !== editingId) {
         const isSingleSelected = selectedIds.size === 1;
         ctx.strokeStyle = '#00f0ff';
-        ctx.lineWidth = 1.5 / zoom;
+        ctx.lineWidth = 1.2 / zoom;
         ctx.setLineDash([4 / zoom, 4 / zoom]);
         ctx.strokeRect(-4, -4, el.width + 8, el.height + 8);
         ctx.setLineDash([]);
 
         if (isSingleSelected) {
-          // Render 8 Resize Handles on corners and edges
-          const handles = [
-            { x: -4, y: -4 },
-            { x: el.width / 2, y: -4 },
-            { x: el.width + 4, y: -4 },
-            { x: el.width + 4, y: el.height / 2 },
-            { x: el.width + 4, y: el.height + 4 },
-            { x: el.width / 2, y: el.height + 4 },
-            { x: -4, y: el.height + 4 },
-            { x: -4, y: el.height / 2 },
-          ];
+          // 4 corner handles for text (clean and uncluttered), 8 for shapes and stickies
+          const handles = el.type === 'text'
+            ? [
+                { x: -4, y: -4 },
+                { x: el.width + 4, y: -4 },
+                { x: el.width + 4, y: el.height + 4 },
+                { x: -4, y: el.height + 4 },
+              ]
+            : [
+                { x: -4, y: -4 },
+                { x: el.width / 2, y: -4 },
+                { x: el.width + 4, y: -4 },
+                { x: el.width + 4, y: el.height / 2 },
+                { x: el.width + 4, y: el.height + 4 },
+                { x: el.width / 2, y: el.height + 4 },
+                { x: -4, y: el.height + 4 },
+                { x: -4, y: el.height / 2 },
+              ];
 
-          const handleRadius = 4 / zoom;
+          const handleRadius = (el.type === 'text' ? 3.5 : 4) / zoom;
           handles.forEach(h => {
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(h.x - handleRadius, h.y - handleRadius, handleRadius * 2, handleRadius * 2);
             ctx.strokeStyle = '#00f0ff';
-            ctx.lineWidth = 1.5 / zoom;
+            ctx.lineWidth = 1.2 / zoom;
             ctx.strokeRect(h.x - handleRadius, h.y - handleRadius, handleRadius * 2, handleRadius * 2);
           });
         }
@@ -1640,7 +1654,6 @@ export function BoardCanvas({
         // Clicked on empty canvas -> deselect
         setSelectedId(null);
         setSelectedIds(new Set());
-        setColorPickerOpen(false);
         wasAlreadySelectedRef.current = false;
       }
       return;
@@ -2165,7 +2178,7 @@ export function BoardCanvas({
   // Floating toolbar dynamic positioning clamped inside visible viewport
   const toolbarPos = useMemo(() => {
     if (!selectedElement || !containerRef.current) {
-      return { top: '56px', left: '50%', transform: 'translateX(-50%)', isPlacedBelow: false };
+      return { top: '56px', left: '50%', transform: 'translate(-50%, 0)', isPlacedBelow: false };
     }
     const rect = containerRef.current.getBoundingClientRect();
     const viewW = rect.width || (typeof window !== 'undefined' ? window.innerWidth : 1200);
@@ -2175,19 +2188,27 @@ export function BoardCanvas({
     const topY = selectedElement.y * zoom + pan.y;
     const bottomY = (selectedElement.y + (selectedElement.height || 60)) * zoom + pan.y;
 
-    // Generous 64px clearance above the element so toolbar never touches bounding box or handles
-    // If too close to the top header (< 72px), position 20px below the element
-    const isPlacedBelow = topY - 64 < 72;
-    let y = isPlacedBelow ? bottomY + 20 : topY - 64;
-    y = Math.max(68, Math.min(viewH - 80, y));
+    // Generous clearance: place toolbar 14px above the bounding box.
+    // If too close to the top header (< 110px), position 14px below the element.
+    const isPlacedBelow = topY - 14 < 110;
+    let y: number;
+    let transform: string;
+
+    if (isPlacedBelow) {
+      y = Math.min(viewH - 64, bottomY + 14);
+      transform = 'translate(-50%, 0)';
+    } else {
+      y = Math.max(76, topY - 14);
+      transform = 'translate(-50%, -100%)';
+    }
 
     // Clamp horizontally so toolbar never clips off-screen left or right
-    const clampedX = Math.max(210, Math.min(viewW - 210, centerX));
+    const clampedX = Math.max(190, Math.min(viewW - 190, centerX));
 
     return {
       top: `${Math.round(y)}px`,
       left: `${Math.round(clampedX)}px`,
-      transform: 'translateX(-50%)',
+      transform,
       isPlacedBelow,
     };
   }, [selectedElement, zoom, pan]);
@@ -2244,7 +2265,7 @@ export function BoardCanvas({
       )}
 
       {/* Floating Contextual Element Action Toolbar */}
-      {selectedId && !isDraggingElement && !editingId && (
+      {selectedId && !isDraggingElement && !editingId && selectedElement && (
         <div
           style={toolbarPos}
           className="absolute z-30 pointer-events-auto transition-[top,left] duration-75 select-none"
@@ -2255,40 +2276,27 @@ export function BoardCanvas({
           onTouchStart={e => e.stopPropagation()}
           onTouchEnd={e => e.stopPropagation()}
         >
-          <div className="relative px-3 py-1.5 rounded-2xl bg-[#0c0c16]/95 border border-cyan-500/30 text-white text-xs font-medium backdrop-blur-xl flex items-center gap-1.5 sm:gap-2 shadow-[0_8px_32px_rgba(0,0,0,0.7)] max-w-[calc(100vw-24px)] overflow-visible">
-            {/* Element Type Badge */}
-            <span className="px-2 py-0.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[11px] font-semibold tracking-wide uppercase shrink-0 select-none">
-              {selectedIds.size > 1
-                ? `${selectedIds.size} items`
-                : selectedElement?.type === 'text'
-                ? 'Text'
-                : selectedElement?.type === 'sticky'
-                ? 'Sticky'
-                : selectedElement?.type === 'shape'
-                ? 'Shape'
-                : 'Selected'}
-            </span>
-
+          <div className="h-9 sm:h-10 px-2 sm:px-2.5 rounded-full bg-[#0d0d18]/95 border border-white/12 text-white text-xs font-medium backdrop-blur-xl flex items-center gap-1 sm:gap-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.7)] max-w-[calc(100vw-24px)] overflow-x-auto no-scrollbar">
             {/* Quick Edit button for text/sticky/shape */}
-            {selectedElement && (selectedElement.type === 'text' || selectedElement.type === 'sticky' || selectedElement.type === 'shape') && (
+            {(selectedElement.type === 'text' || selectedElement.type === 'sticky' || selectedElement.type === 'shape') && (
               <button
                 type="button"
                 onClick={e => {
                   e.stopPropagation();
                   startEditing(selectedElement);
                 }}
-                className="min-h-[32px] px-2.5 py-1 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 active:scale-95 text-cyan-300 hover:text-white border border-cyan-500/30 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                className="h-7 px-2 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 active:scale-95 text-cyan-300 hover:text-white border border-cyan-500/30 text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shrink-0"
                 title="Edit Text (Enter or Double-click)"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                 </svg>
-                <span>Edit</span>
+                <span className="text-[11px] font-medium hidden sm:inline">Edit</span>
               </button>
             )}
 
             {/* Quick Checklist Toggle button for checklist sticky notes */}
-            {selectedElement && selectedElement.content && (selectedElement.content.includes('[ ]') || selectedElement.content.includes('[x]')) && (
+            {selectedElement.content && (selectedElement.content.includes('[ ]') || selectedElement.content.includes('[x]')) && (
               <button
                 type="button"
                 onClick={e => {
@@ -2307,121 +2315,90 @@ export function BoardCanvas({
                     return next;
                   });
                 }}
-                className="min-h-[32px] px-2.5 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 text-emerald-300 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-                title="Toggle next checklist item"
+                className="h-7 px-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 text-emerald-300 text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                title="Toggle checklist item"
               >
-                <span>✅ Check</span>
+                <span>✅</span>
               </button>
             )}
 
-            {/* Element Color Swatch & Palette Picker */}
-            {selectedElement && (
-              <div className="relative flex items-center shrink-0">
-                <button
-                  type="button"
-                  title="Change color"
-                  onClick={e => {
-                    e.stopPropagation();
-                    setColorPickerOpen(prev => !prev);
-                  }}
-                  className={`w-7 h-7 rounded-full cursor-pointer transition-all flex items-center justify-center p-0.5 shadow-sm active:scale-95 ${
-                    colorPickerOpen
-                      ? 'ring-2 ring-cyan-400 scale-105 shadow-[0_0_10px_rgba(0,240,255,0.4)]'
-                      : 'ring-2 ring-white/40 hover:ring-white hover:scale-105'
-                  }`}
-                  style={{ backgroundColor: selectedElement.color || '#00f0ff' }}
-                >
-                  <span className="sr-only">Choose color</span>
-                </button>
-
-                {/* Dropdown Palette */}
-                {colorPickerOpen && (
-                  <div
-                    className={`absolute ${
-                      toolbarPos.isPlacedBelow ? 'top-full mt-3' : 'bottom-full mb-3'
-                    } left-1/2 -translate-x-1/2 z-50 p-2.5 rounded-2xl bg-[#11111d]/98 border border-white/20 shadow-[0_12px_40px_rgba(0,0,0,0.85)] flex items-center gap-2 backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150 whitespace-nowrap`}
-                    onPointerDown={e => e.stopPropagation()}
-                    onClick={e => e.stopPropagation()}
-                  >
-                    {/* Directional Caret / Arrow */}
-                    <div
-                      className={`absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45 bg-[#11111d] ${
-                        toolbarPos.isPlacedBelow
-                          ? '-top-1.5 border-l border-t border-white/20'
-                          : '-bottom-1.5 border-r border-b border-white/20'
-                      }`}
-                    />
-
-                    {PALETTE_COLORS.map(c => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation();
-                          handleColorSelect(c);
-                          setColorPickerOpen(false);
-                        }}
-                        className={`w-6 h-6 rounded-full border border-black/40 hover:scale-125 transition-all cursor-pointer relative z-10 ${
-                          (selectedElement.color || '#00f0ff') === c
-                            ? 'ring-2 ring-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.5)]'
-                            : 'hover:shadow-sm'
-                        }`}
-                        style={{ backgroundColor: c }}
-                        title={c}
-                      />
-                    ))}
-                    <label
-                      title="Custom color wheel"
-                      className="w-6 h-6 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-cyan-400 cursor-pointer overflow-hidden ring-1 ring-white/30 hover:scale-125 transition-all relative flex items-center justify-center ml-1 z-10"
-                    >
-                      <input
-                        type="color"
-                        value={
-                          selectedElement.color && selectedElement.color.startsWith('#') && selectedElement.color.length === 7
-                            ? selectedElement.color
-                            : '#00f0ff'
-                        }
-                        onChange={e => {
-                          handleColorSelect(e.target.value);
-                        }}
-                        className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
-                      />
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Font Size Adjusters for text & sticky */}
-            {selectedElement && (selectedElement.type === 'text' || selectedElement.type === 'sticky') && (
-              <div className="flex items-center rounded-xl bg-white/5 border border-white/10 p-0.5 shrink-0">
-                <button
-                  type="button"
-                  title="Smaller text (A-)"
-                  onClick={e => {
-                    e.stopPropagation();
-                    handleFontSizeAdjust(-2);
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-white/10 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-[11px] transition-colors cursor-pointer"
-                >
-                  A−
-                </button>
-                <span className="text-[11px] font-mono font-bold text-cyan-300 px-1.5 text-center min-w-[34px] select-none">
-                  {selectedElement.fontSize || (selectedElement.type === 'sticky' ? 13 : 16)}px
-                </span>
-                <button
-                  type="button"
-                  title="Larger text (A+)"
-                  onClick={e => {
-                    e.stopPropagation();
-                    handleFontSizeAdjust(2);
-                  }}
-                  className="w-7 h-7 rounded-lg hover:bg-white/10 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-[11px] transition-colors cursor-pointer"
-                >
-                  A+
-                </button>
-              </div>
+            {(selectedElement.type === 'text' || selectedElement.type === 'sticky') && (
+              <>
+                <div className="flex items-center rounded-lg bg-white/5 border border-white/10 p-0.5 shrink-0">
+                  <button
+                    type="button"
+                    title="Smaller text (A-)"
+                    onClick={e => {
+                      e.stopPropagation();
+                      handleFontSizeAdjust(-2);
+                    }}
+                    className="w-6 h-6 rounded hover:bg-white/10 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-[11px] transition-colors cursor-pointer"
+                  >
+                    A−
+                  </button>
+                  <span className="text-[11px] font-mono font-bold text-cyan-300 px-1 text-center min-w-[30px] select-none">
+                    {selectedElement.fontSize || (selectedElement.type === 'sticky' ? 13 : 16)}
+                  </span>
+                  <button
+                    type="button"
+                    title="Larger text (A+)"
+                    onClick={e => {
+                      e.stopPropagation();
+                      handleFontSizeAdjust(2);
+                    }}
+                    className="w-6 h-6 rounded hover:bg-white/10 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-[11px] transition-colors cursor-pointer"
+                  >
+                    A+
+                  </button>
+                </div>
+                <div className="w-px h-3.5 bg-white/10 mx-0.5 shrink-0" />
+              </>
             )}
+
+            {/* Inline Color Palette Dots (One-click instant color change, zero messy popovers!) */}
+            <div className="flex items-center gap-1 shrink-0 px-0.5">
+              {PALETTE_COLORS.map(c => {
+                const isCurrent = (selectedElement.color || '#00f0ff').toLowerCase() === c.toLowerCase();
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      handleColorSelect(c);
+                    }}
+                    className={`w-4.5 h-4.5 sm:w-5 sm:h-5 rounded-full cursor-pointer transition-all duration-150 flex items-center justify-center shrink-0 ${
+                      isCurrent
+                        ? 'ring-2 ring-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.7)]'
+                        : 'opacity-85 hover:opacity-100 hover:scale-115'
+                    }`}
+                    style={{ backgroundColor: c }}
+                    title={`Color ${c}`}
+                  />
+                );
+              })}
+              {/* Custom Color Wheel */}
+              <label
+                title="Custom color wheel"
+                className="w-4.5 h-4.5 sm:w-5 sm:h-5 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-cyan-400 cursor-pointer overflow-hidden ring-1 ring-white/30 hover:scale-115 transition-all relative flex items-center justify-center shrink-0"
+              >
+                <input
+                  type="color"
+                  value={
+                    selectedElement.color && selectedElement.color.startsWith('#') && selectedElement.color.length === 7
+                      ? selectedElement.color
+                      : '#00f0ff'
+                  }
+                  onChange={e => {
+                    handleColorSelect(e.target.value);
+                  }}
+                  className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                />
+              </label>
+            </div>
+
+            <div className="w-px h-3.5 bg-white/10 mx-0.5 shrink-0" />
 
             {/* Duplicate button */}
             <button
@@ -2430,13 +2407,12 @@ export function BoardCanvas({
                 e.stopPropagation();
                 handleDuplicateSelected();
               }}
-              className="min-h-[32px] px-2.5 py-1 rounded-xl bg-white/5 hover:bg-white/10 active:scale-95 text-zinc-200 hover:text-white border border-white/10 text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-              title="Duplicate selected (Ctrl+D)"
+              className="h-7 w-7 rounded-lg hover:bg-white/10 active:scale-95 text-zinc-300 hover:text-white transition-all flex items-center justify-center cursor-pointer shrink-0"
+              title="Duplicate (Ctrl+D)"
             >
-              <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              <span>Duplicate</span>
             </button>
 
             {/* Delete button */}
@@ -2446,13 +2422,12 @@ export function BoardCanvas({
                 e.stopPropagation();
                 handleDeleteSelected();
               }}
-              className="min-h-[32px] px-2.5 py-1 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 active:scale-95 text-rose-300 hover:text-rose-200 border border-rose-500/30 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-              title="Delete selected (Delete or Backspace)"
+              className="h-7 w-7 rounded-lg hover:bg-rose-500/20 active:scale-95 text-rose-400 hover:text-rose-200 transition-all flex items-center justify-center cursor-pointer shrink-0"
+              title="Delete (Del or Backspace)"
             >
-              <svg className="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              <span>Delete</span>
             </button>
 
             {/* Deselect / Close button */}
@@ -2462,9 +2437,8 @@ export function BoardCanvas({
                 e.stopPropagation();
                 setSelectedId(null);
                 setSelectedIds(new Set());
-                setColorPickerOpen(false);
               }}
-              className="w-7 h-7 rounded-xl hover:bg-white/10 active:scale-95 text-zinc-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0 ml-0.5"
+              className="h-7 w-7 rounded-lg hover:bg-white/10 active:scale-95 text-zinc-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
               title="Deselect (Escape)"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
