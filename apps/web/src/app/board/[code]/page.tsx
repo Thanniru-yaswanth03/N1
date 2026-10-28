@@ -491,7 +491,12 @@ export default function StudyBoardRoomPage() {
         activityTimerRef.current = setTimeout(() => setRecentActivity(null), 4000);
       },
       onError: msg => {
-        setLoadError(msg);
+        // Only treat as fatal loadError if the room itself is not found and hasn't been loaded via REST
+        if (msg === 'Study room not found' && !room) {
+          setLoadError(msg);
+        } else {
+          console.warn('[BoardSocket] Non-fatal socket error:', msg);
+        }
       },
       onConnectionChange: connected => {
         setIsConnected(connected);
@@ -931,17 +936,30 @@ export default function StudyBoardRoomPage() {
   }
 
   // ── Render Error State ──
-  if (loadError) {
+  if (loadError && !room) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-[#09090f]">
         <div className="w-full max-w-md p-8 rounded-3xl border border-red-500/20 bg-[var(--color-surface)] text-center space-y-4">
           <h2 className="text-lg font-bold text-red-300">Room Not Found</h2>
           <p className="text-xs text-[var(--color-text-secondary)]">{loadError}</p>
-          <Link href="/board">
-            <Button variant="secondary" size="md">
-              Back to Study Board Hub
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => {
+                setLoadError(null);
+                setLoading(true);
+                window.location.reload();
+              }}
+            >
+              Retry Connection
             </Button>
-          </Link>
+            <Link href="/board">
+              <Button variant="secondary" size="md">
+                Back to Study Board Hub
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
     );

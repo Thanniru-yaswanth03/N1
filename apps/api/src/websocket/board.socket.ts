@@ -114,6 +114,9 @@ export class BoardWebSocketManager {
     const queryToken = url.searchParams.get('token')?.trim() || null;
     const queryClientId = url.searchParams.get('clientId')?.trim() || null;
 
+    const validQueryRoom =
+      queryRoom && /^[A-Z0-9]{6}$/.test(queryRoom) ? queryRoom : null;
+
     const session: ClientSession = {
       ws,
       userId: `u_${Math.random().toString(36).substring(2, 9)}`,
@@ -122,7 +125,7 @@ export class BoardWebSocketManager {
         queryName || ANONYMOUS_NAMES[Math.floor(Math.random() * ANONYMOUS_NAMES.length)]!,
       userColor:
         ANONYMOUS_COLORS[Math.floor(Math.random() * ANONYMOUS_COLORS.length)]!,
-      roomCode: null,
+      roomCode: validQueryRoom,
       isCreator: false,
       role: 'participant',
       creatorToken: queryToken,
@@ -177,6 +180,15 @@ export class BoardWebSocketManager {
 
       const message = parseResult.data as BoardSocketClientMessage;
 
+      // Protocol-level keepalive heartbeat (never requires room authorization)
+      if (message.type === 'PING') {
+        session.isAlive = true;
+        this.send(ws, {
+          type: 'PONG',
+        });
+        return;
+      }
+
       // 3. Authorization: Client must be in a room to perform operations other than JOIN
       if (message.type !== 'JOIN' && !session.roomCode) {
         this.send(ws, {
@@ -194,8 +206,8 @@ export class BoardWebSocketManager {
     });
 
     // If query room was provided in handshake URL, join immediately
-    if (queryRoom && /^[A-Z0-9]{6}$/.test(queryRoom)) {
-      this.joinRoom(session, queryRoom, queryToken, queryClientId);
+    if (validQueryRoom) {
+      this.joinRoom(session, validQueryRoom, queryToken, queryClientId);
     }
   }
 
@@ -205,10 +217,11 @@ export class BoardWebSocketManager {
     providedCreatorToken?: string | null,
     clientPassedId?: string | null
   ) {
-    // Leave previous room if joined
-    if (session.roomCode) {
+    // Leave previous room if joined and changing rooms
+    if (session.roomCode && session.roomCode !== roomCode) {
       this.leaveRoom(session);
     }
+    session.roomCode = roomCode;
 
     if (clientPassedId) {
       session.clientId = clientPassedId;
@@ -216,6 +229,7 @@ export class BoardWebSocketManager {
 
     const roomDetail = await boardRoomService.getRoom(roomCode);
     if (!roomDetail) {
+      session.roomCode = null;
       this.send(session.ws, {
         type: 'ERROR',
         message: 'Study room not found',

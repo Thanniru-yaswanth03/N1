@@ -18,7 +18,7 @@ export function getBoardApiBase(): string {
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
     if (host && host !== 'localhost' && host !== '127.0.0.1') {
-      return 'https://n1-api.onrender.com';
+      return (process.env.NEXT_PUBLIC_API_URL || 'https://n1-api.onrender.com').replace(/\/+$/, '');
     }
   }
   return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
@@ -389,6 +389,7 @@ export function connectBoardSocket(
   let ws: WebSocket | null = null;
   let isClosedManually = false;
   let hasConnectedOnce = false;
+  let isRoomJoined = false;
   let reconnectTimeout: NodeJS.Timeout | null = null;
   let pingInterval: NodeJS.Timeout | null = null;
 
@@ -415,6 +416,25 @@ export function connectBoardSocket(
     }
   })();
 
+  const sendJoinPayload = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: 'JOIN',
+            roomCode: roomCode.toUpperCase().trim(),
+            userName: userName || undefined,
+            clientId,
+            creatorToken: resolvedToken || undefined,
+            token: resolvedToken || undefined,
+          })
+        );
+      } catch {
+        // ignore send error
+      }
+    }
+  };
+
   const connect = () => {
     try {
       callbacks.onConnectionStatusChange?.(hasConnectedOnce ? 'RECONNECTING' : 'CONNECTING');
@@ -424,6 +444,9 @@ export function connectBoardSocket(
         hasConnectedOnce = true;
         callbacks.onConnectionChange(true);
         callbacks.onConnectionStatusChange?.('CONNECTED');
+
+        // Always send explicit JOIN message immediately on socket open for maximum reverse-proxy compatibility
+        sendJoinPayload();
 
         // Application-level keepalive heartbeat every 18 seconds
         if (pingInterval) clearInterval(pingInterval);
@@ -439,6 +462,7 @@ export function connectBoardSocket(
           const msg = JSON.parse(event.data) as BoardSocketServerMessage;
           switch (msg.type) {
             case 'ROOM_STATE':
+              isRoomJoined = true;
               if (msg.room.creatorToken) {
                 saveCreatorToken(roomCode, msg.room.creatorToken);
               }
@@ -498,6 +522,10 @@ export function connectBoardSocket(
               callbacks.onRoomExpired();
               break;
             case 'ERROR':
+              if (msg.message === 'Unauthorized: must join a room first') {
+                // Auto-recover: re-emit JOIN message immediately
+                sendJoinPayload();
+              }
               callbacks.onError?.(msg.message);
               break;
             case 'LIVE_DRAW_CHUNK':
@@ -528,6 +556,7 @@ export function connectBoardSocket(
       };
 
       ws.onclose = event => {
+        isRoomJoined = false;
         if (pingInterval) {
           clearInterval(pingInterval);
           pingInterval = null;
@@ -573,6 +602,10 @@ export function connectBoardSocket(
 
   const send = (msg: BoardSocketClientMessage) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
+      // Prioritize JOIN and PING; hold other messages until room membership is confirmed
+      if (!isRoomJoined && msg.type !== 'JOIN' && msg.type !== 'PING') {
+        return;
+      }
       ws.send(JSON.stringify(msg));
     }
   };
