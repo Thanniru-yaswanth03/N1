@@ -2165,7 +2165,7 @@ export function BoardCanvas({
   // Floating toolbar dynamic positioning clamped inside visible viewport
   const toolbarPos = useMemo(() => {
     if (!selectedElement || !containerRef.current) {
-      return { top: '56px', left: '50%', transform: 'translateX(-50%)' };
+      return { top: '56px', left: '50%', transform: 'translateX(-50%)', isPlacedBelow: false };
     }
     const rect = containerRef.current.getBoundingClientRect();
     const viewW = rect.width || (typeof window !== 'undefined' ? window.innerWidth : 1200);
@@ -2175,20 +2175,20 @@ export function BoardCanvas({
     const topY = selectedElement.y * zoom + pan.y;
     const bottomY = (selectedElement.y + (selectedElement.height || 60)) * zoom + pan.y;
 
-    // Default: float 54px above the element. If too close to the top (< 64px), position 14px below the element
-    let y = topY - 54;
-    if (y < 64) {
-      y = bottomY + 14;
-    }
-    y = Math.max(54, Math.min(viewH - 100, y));
+    // Generous 64px clearance above the element so toolbar never touches bounding box or handles
+    // If too close to the top header (< 72px), position 20px below the element
+    const isPlacedBelow = topY - 64 < 72;
+    let y = isPlacedBelow ? bottomY + 20 : topY - 64;
+    y = Math.max(68, Math.min(viewH - 80, y));
 
-    // Clamp horizontally so the toolbar never clips off-screen left or right
-    const clampedX = Math.max(170, Math.min(viewW - 170, centerX));
+    // Clamp horizontally so toolbar never clips off-screen left or right
+    const clampedX = Math.max(210, Math.min(viewW - 210, centerX));
 
     return {
       top: `${Math.round(y)}px`,
       left: `${Math.round(clampedX)}px`,
       transform: 'translateX(-50%)',
+      isPlacedBelow,
     };
   }, [selectedElement, zoom, pan]);
 
@@ -2255,17 +2255,17 @@ export function BoardCanvas({
           onTouchStart={e => e.stopPropagation()}
           onTouchEnd={e => e.stopPropagation()}
         >
-          <div className="relative px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-2xl bg-[#0d0d17]/95 border border-cyan-500/30 text-cyan-300 text-xs font-semibold backdrop-blur-xl flex items-center gap-1.5 sm:gap-2 shadow-2xl max-w-[95vw] overflow-x-auto scrollbar-none">
+          <div className="relative px-3 py-1.5 rounded-2xl bg-[#0c0c16]/95 border border-cyan-500/30 text-white text-xs font-medium backdrop-blur-xl flex items-center gap-1.5 sm:gap-2 shadow-[0_8px_32px_rgba(0,0,0,0.7)] max-w-[calc(100vw-24px)] overflow-visible">
             {/* Element Type Badge */}
-            <span className="px-2 py-1 rounded-lg bg-cyan-500/10 text-cyan-300 font-mono text-[11px] shrink-0 whitespace-nowrap">
+            <span className="px-2 py-0.5 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[11px] font-semibold tracking-wide uppercase shrink-0 select-none">
               {selectedIds.size > 1
                 ? `${selectedIds.size} items`
                 : selectedElement?.type === 'text'
-                ? 'Text Block'
+                ? 'Text'
                 : selectedElement?.type === 'sticky'
-                ? '📝 Sticky Note'
+                ? 'Sticky'
                 : selectedElement?.type === 'shape'
-                ? '▭ Shape'
+                ? 'Shape'
                 : 'Selected'}
             </span>
 
@@ -2277,10 +2277,13 @@ export function BoardCanvas({
                   e.stopPropagation();
                   startEditing(selectedElement);
                 }}
-                className="min-h-[36px] px-2.5 py-1 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 active:scale-95 text-cyan-300 text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                className="min-h-[32px] px-2.5 py-1 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 active:scale-95 text-cyan-300 hover:text-white border border-cyan-500/30 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
                 title="Edit Text (Enter or Double-click)"
               >
-                <span>✏️ Edit</span>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                <span>Edit</span>
               </button>
             )}
 
@@ -2304,7 +2307,7 @@ export function BoardCanvas({
                     return next;
                   });
                 }}
-                className="min-h-[36px] px-2 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 text-emerald-300 text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                className="min-h-[32px] px-2.5 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 text-emerald-300 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
                 title="Toggle next checklist item"
               >
                 <span>✅ Check</span>
@@ -2321,7 +2324,11 @@ export function BoardCanvas({
                     e.stopPropagation();
                     setColorPickerOpen(prev => !prev);
                   }}
-                  className="w-7 h-7 rounded-full cursor-pointer ring-2 ring-white/30 hover:ring-cyan-400 hover:scale-110 active:scale-95 transition-all flex items-center justify-center p-0.5"
+                  className={`w-7 h-7 rounded-full cursor-pointer transition-all flex items-center justify-center p-0.5 shadow-sm active:scale-95 ${
+                    colorPickerOpen
+                      ? 'ring-2 ring-cyan-400 scale-105 shadow-[0_0_10px_rgba(0,240,255,0.4)]'
+                      : 'ring-2 ring-white/40 hover:ring-white hover:scale-105'
+                  }`}
                   style={{ backgroundColor: selectedElement.color || '#00f0ff' }}
                 >
                   <span className="sr-only">Choose color</span>
@@ -2330,10 +2337,21 @@ export function BoardCanvas({
                 {/* Dropdown Palette */}
                 {colorPickerOpen && (
                   <div
-                    className="absolute top-full mt-2 left-0 z-50 p-2 rounded-2xl bg-[#121222]/98 border border-white/20 shadow-2xl flex items-center gap-1.5 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-100"
+                    className={`absolute ${
+                      toolbarPos.isPlacedBelow ? 'top-full mt-3' : 'bottom-full mb-3'
+                    } left-1/2 -translate-x-1/2 z-50 p-2.5 rounded-2xl bg-[#11111d]/98 border border-white/20 shadow-[0_12px_40px_rgba(0,0,0,0.85)] flex items-center gap-2 backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150 whitespace-nowrap`}
                     onPointerDown={e => e.stopPropagation()}
                     onClick={e => e.stopPropagation()}
                   >
+                    {/* Directional Caret / Arrow */}
+                    <div
+                      className={`absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45 bg-[#11111d] ${
+                        toolbarPos.isPlacedBelow
+                          ? '-top-1.5 border-l border-t border-white/20'
+                          : '-bottom-1.5 border-r border-b border-white/20'
+                      }`}
+                    />
+
                     {PALETTE_COLORS.map(c => (
                       <button
                         key={c}
@@ -2343,8 +2361,10 @@ export function BoardCanvas({
                           handleColorSelect(c);
                           setColorPickerOpen(false);
                         }}
-                        className={`w-6 h-6 rounded-full border border-black/40 hover:scale-125 transition-transform ${
-                          (selectedElement.color || '#00f0ff') === c ? 'ring-2 ring-white scale-110' : ''
+                        className={`w-6 h-6 rounded-full border border-black/40 hover:scale-125 transition-all cursor-pointer relative z-10 ${
+                          (selectedElement.color || '#00f0ff') === c
+                            ? 'ring-2 ring-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.5)]'
+                            : 'hover:shadow-sm'
                         }`}
                         style={{ backgroundColor: c }}
                         title={c}
@@ -2352,7 +2372,7 @@ export function BoardCanvas({
                     ))}
                     <label
                       title="Custom color wheel"
-                      className="w-6 h-6 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-cyan-400 cursor-pointer overflow-hidden ring-1 ring-white/30 hover:scale-125 transition-transform relative flex items-center justify-center ml-1"
+                      className="w-6 h-6 rounded-full bg-gradient-to-tr from-rose-500 via-amber-400 to-cyan-400 cursor-pointer overflow-hidden ring-1 ring-white/30 hover:scale-125 transition-all relative flex items-center justify-center ml-1 z-10"
                     >
                       <input
                         type="color"
@@ -2374,7 +2394,7 @@ export function BoardCanvas({
 
             {/* Font Size Adjusters for text & sticky */}
             {selectedElement && (selectedElement.type === 'text' || selectedElement.type === 'sticky') && (
-              <div className="flex items-center gap-1 px-1 border-l border-white/10 shrink-0">
+              <div className="flex items-center rounded-xl bg-white/5 border border-white/10 p-0.5 shrink-0">
                 <button
                   type="button"
                   title="Smaller text (A-)"
@@ -2382,11 +2402,11 @@ export function BoardCanvas({
                     e.stopPropagation();
                     handleFontSizeAdjust(-2);
                   }}
-                  className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/15 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-xs cursor-pointer"
+                  className="w-7 h-7 rounded-lg hover:bg-white/10 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-[11px] transition-colors cursor-pointer"
                 >
-                  A-
+                  A−
                 </button>
-                <span className="text-[11px] font-mono text-zinc-300 px-1 text-center whitespace-nowrap min-w-[28px]">
+                <span className="text-[11px] font-mono font-bold text-cyan-300 px-1.5 text-center min-w-[34px] select-none">
                   {selectedElement.fontSize || (selectedElement.type === 'sticky' ? 13 : 16)}px
                 </span>
                 <button
@@ -2396,7 +2416,7 @@ export function BoardCanvas({
                     e.stopPropagation();
                     handleFontSizeAdjust(2);
                   }}
-                  className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/15 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-xs cursor-pointer"
+                  className="w-7 h-7 rounded-lg hover:bg-white/10 active:scale-95 text-zinc-300 hover:text-white flex items-center justify-center font-bold text-[11px] transition-colors cursor-pointer"
                 >
                   A+
                 </button>
@@ -2410,10 +2430,13 @@ export function BoardCanvas({
                 e.stopPropagation();
                 handleDuplicateSelected();
               }}
-              className="min-h-[36px] px-2.5 py-1 rounded-xl bg-white/5 hover:bg-white/15 active:scale-95 text-zinc-200 hover:text-white text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+              className="min-h-[32px] px-2.5 py-1 rounded-xl bg-white/5 hover:bg-white/10 active:scale-95 text-zinc-200 hover:text-white border border-white/10 text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
               title="Duplicate selected (Ctrl+D)"
             >
-              <span>📋 Duplicate</span>
+              <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <span>Duplicate</span>
             </button>
 
             {/* Delete button */}
@@ -2423,10 +2446,13 @@ export function BoardCanvas({
                 e.stopPropagation();
                 handleDeleteSelected();
               }}
-              className="min-h-[36px] px-2.5 py-1 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 active:scale-95 text-rose-300 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+              className="min-h-[32px] px-2.5 py-1 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 active:scale-95 text-rose-300 hover:text-rose-200 border border-rose-500/30 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
               title="Delete selected (Delete or Backspace)"
             >
-              <span>🗑️ Delete</span>
+              <svg className="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              <span>Delete</span>
             </button>
 
             {/* Deselect / Close button */}
@@ -2438,10 +2464,12 @@ export function BoardCanvas({
                 setSelectedIds(new Set());
                 setColorPickerOpen(false);
               }}
-              className="w-8 h-8 rounded-xl hover:bg-white/10 active:scale-95 text-zinc-400 hover:text-white flex items-center justify-center text-xs cursor-pointer shrink-0"
+              className="w-7 h-7 rounded-xl hover:bg-white/10 active:scale-95 text-zinc-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0 ml-0.5"
               title="Deselect (Escape)"
             >
-              ✕
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           </div>
         </div>
